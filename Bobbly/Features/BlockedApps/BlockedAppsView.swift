@@ -48,8 +48,15 @@ struct BlockedAppsView: View {
                 if !model.canUsePicker {
                     Panel {
                         EmptyStateView(title: "Screen Time access needed",
-                                       message: "Bobbly can pick apps once you allow Screen Time access. Open Settings › Permission tutorial to turn it on.",
-                                       mood: .okay)
+                                       message: "Bobbly can pick apps once you allow Screen Time access.",
+                                       mood: .okay) {
+                            Button {
+                                model.openTutorial()
+                            } label: {
+                                Label("Set up Screen Time", systemImage: "hourglass")
+                            }
+                            .buttonStyle(.bobbly(.primary, fullWidth: false))
+                        }
                     }
                 } else {
                     Panel(padding: Theme.Spacing.l) {
@@ -120,6 +127,24 @@ private struct ShortcutsBlockedApps: View {
 
     var body: some View {
         List {
+            if !model.canUsePicker {
+                Section {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+                        IconRow(systemImage: "hourglass",
+                                title: "Real blocking needs Screen Time",
+                                detail: "Without it, Bobbly relies on Shortcuts automations, which are easier to get around.")
+                        Button {
+                            model.openTutorial()
+                        } label: {
+                            Label("Set up Screen Time", systemImage: "hourglass")
+                        }
+                        .buttonStyle(.bobbly(.primary, fullWidth: false, compact: true))
+                    }
+                    .padding(.vertical, Theme.Spacing.xxs)
+                }
+                .listRowBackground(Theme.Palette.surface)
+            }
+
             Section {
                 if model.trackedApps.isEmpty {
                     Text("No apps yet. Add a popular app below, or any app by name.")

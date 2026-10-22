@@ -102,17 +102,26 @@ struct HomeView: View {
     @ViewBuilder private var statusContent: some View {
         switch model.protection {
         case .setupNeeded:
-            WaterStatus(systemImage: "wand.and.stars",
-                        title: "Let's set up blocking",
-                        detail: "Pick the apps that pull you in. Bobbly takes it from there.") {
-                Button("Set up Bobbly") { model.openSetup() }
-                    .buttonStyle(.bobbly(.onWater(.setup)))
+            if model.needsAppRepick {
+                WaterStatus(systemImage: "arrow.triangle.2.circlepath",
+                            title: "Pick your apps again",
+                            detail: "Screen Time access was turned off, so your app picks were cleared. Choose them again to turn blocking back on.") {
+                    Button("Pick your apps again") { model.perform(.editBlockedApps) }
+                        .buttonStyle(.bobbly(.onWater(.setup)))
+                }
+            } else {
+                WaterStatus(systemImage: "wand.and.stars",
+                            title: "Let's set up blocking",
+                            detail: "Pick the apps that pull you in. Bobbly takes it from there.") {
+                    Button("Set up Bobbly") { model.openSetup() }
+                        .buttonStyle(.bobbly(.onWater(.setup)))
+                }
             }
 
         case .protecting(let count):
             WaterStatus(systemImage: "lock.fill",
                         title: "Bobbly's on watch",
-                        detail: "Blocking \(Fmt.count(count, "item")). Talk to Bobbly when you need one back.") {
+                        detail: "Blocking \(blockedSummary(total: count)). Talk to Bobbly when you need one back.") {
                 Button("Talk to Bobbly") { model.perform(.talkToBobbly) }
                     .buttonStyle(.bobbly(.onWater(.calm)))
             }
@@ -163,6 +172,15 @@ struct HomeView: View {
                     .buttonStyle(.bobbly(.onWater(.off)))
             }
         }
+    }
+
+    /// "3 apps and 1 category", from the separate block-list counts.
+    private func blockedSummary(total: Int) -> String {
+        var parts: [String] = []
+        if model.blockedAppCount > 0 { parts.append(Fmt.count(model.blockedAppCount, "app")) }
+        if model.blockedCategoryCount > 0 { parts.append(Fmt.count(model.blockedCategoryCount, "category", "categories")) }
+        if model.blockedWebsiteCount > 0 { parts.append(Fmt.count(model.blockedWebsiteCount, "website")) }
+        return parts.isEmpty ? Fmt.count(total, "item") : parts.formatted(.list(type: .and))
     }
 
     // MARK: Unlocks

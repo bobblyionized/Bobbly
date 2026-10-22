@@ -183,7 +183,7 @@ struct HoldToConfirmButton: View {
         .accessibilityHint("Starts a \(Int(holdDuration))-second countdown. It finishes unless you cancel.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { if isEnabled { onPress() } }
-        .accessibilityAction(named: "Cancel hold") { onRelease() }
+        .accessibilityAction(named: "Cancel hold") { if isHolding { onRelease() } }
     }
 
     private func label(color: Color) -> some View {

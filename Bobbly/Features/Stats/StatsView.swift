@@ -9,7 +9,6 @@ import DeviceActivity
 
 struct StatsView: View {
     @Bindable var model: StatsViewModel
-    @Environment(AppEnvironment.self) private var env
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Apps shown as their own chart series; the rest fold into "Other".
@@ -29,7 +28,7 @@ struct StatsView: View {
                             EmptyStateView(title: "Nothing to chart yet",
                                            message: "Stats fill in as your Shortcuts automations log app opens. If nothing shows up after using a tracked app, check the setup.",
                                            mood: .okay) {
-                                Button("Check the setup") { env.router.presentTutorial() }
+                                Button("Check the setup") { model.openTutorial() }
                                     .buttonStyle(.bobbly(.secondary, fullWidth: false))
                             }
                         }

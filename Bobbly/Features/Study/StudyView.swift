@@ -19,12 +19,11 @@ struct StudyView: View {
                 VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
                     if let session = model.activeSession {
                         SessionPanel(session: session) { model.requestEndEarly() }
+                        if let error = model.errorMessage {
+                            InlineNotice(kind: .error, text: error)
+                        }
                     } else {
                         setup
-                    }
-
-                    if let error = model.errorMessage {
-                        InlineNotice(kind: .error, text: error)
                     }
 
                     Label(model.alwaysAllowedNote, systemImage: "phone.fill")
@@ -89,7 +88,7 @@ struct StudyView: View {
                                          detail: detail(for: list),
                                          isSelected: model.selectedWhitelistID == list.id,
                                          onSelect: { model.selectedWhitelistID = list.id },
-                                         onEdit: { env.router.present(.whitelistEditor(whitelistID: list.id)) },
+                                         onEdit: { openEditor(for: list.id) },
                                          onDelete: { model.delete(list.id) })
                         }
                     }
@@ -107,14 +106,30 @@ struct StudyView: View {
                 }
             }
 
-            Button {
-                model.startSession()
-            } label: {
-                Label("Start studying", systemImage: "play.fill")
+            VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+                if let error = model.errorMessage {
+                    InlineNotice(kind: .error, text: error)
+                        .transition(.opacity)
+                }
+                Button {
+                    model.startSession()
+                } label: {
+                    Label("Start studying", systemImage: "play.fill")
+                }
+                .buttonStyle(.bobblyPrimary)
+                .disabled(!model.canStart)
             }
-            .buttonStyle(.bobblyPrimary)
-            .disabled(!model.canStart)
+            .animation(Theme.Motion.standard, value: model.errorMessage)
         }
+        .bobblyHaptic(trigger: model.errorMessage) { _, new in
+            new == nil ? nil : SensoryFeedback.error
+        }
+    }
+
+    /// Loads the whitelist into the draft, then shows the editor sheet.
+    private func openEditor(for id: UUID) {
+        model.edit(id)
+        env.router.present(.whitelistEditor(whitelistID: id))
     }
 
     private func detail(for list: WhitelistSummary) -> String {
@@ -209,7 +224,7 @@ private struct WhitelistRow: View {
                         Text(summary.name)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(Theme.Palette.ink)
-                        Text(detail)
+                        Text(summary.needsRepick ? "Screen Time was reset, so its apps need picking again." : detail)
                             .font(.footnote)
                             .foregroundStyle(Theme.Palette.inkSecondary)
                             .lineLimit(2)
@@ -220,6 +235,19 @@ private struct WhitelistRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
+
+            if summary.needsRepick {
+                Button(action: onEdit) {
+                    Label("Pick apps again", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.Palette.amber)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Theme.Palette.amber.opacity(0.14), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Pick apps again for \(summary.name)")
+            }
 
             Button(action: onEdit) {
                 Image(systemName: "pencil")

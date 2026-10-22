@@ -46,7 +46,7 @@ struct EmergencyView: View {
         .interactiveDismissDisabled(model.holdingAction != nil)
         .onAppear { model.onAppear() }
         .onDisappear {
-            if model.holdingAction != nil { model.cancelHold() }
+            model.cancelHold()
         }
         .bobblyHaptic(trigger: model.confirmation) { _, new in
             new == nil ? nil : SensoryFeedback.success
@@ -108,7 +108,7 @@ struct EmergencyView: View {
                         isHolding: model.holdingAction == .unblock,
                         isEnabled: model.holdingAction != .detach,
                         onPress: { model.beginHold(.unblock) },
-                        onRelease: { releaseHold(.unblock) }
+                        onRelease: { model.cancelHold() }
                     )
                 }
             }
@@ -140,7 +140,7 @@ struct EmergencyView: View {
                             isHolding: model.holdingAction == .detach,
                             isEnabled: model.holdingAction != .unblock,
                             onPress: { model.beginHold(.detach) },
-                            onRelease: { releaseHold(.detach) }
+                            onRelease: { model.cancelHold() }
                         )
                     }
 
@@ -254,14 +254,6 @@ struct EmergencyView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.Palette.sunken, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
         }
-    }
-
-    // MARK: Helpers
-
-    /// Finger up: cancel only if this hold is still running (a finished hold
-    /// has already cleared `holdingAction`, and its action may still be working).
-    private func releaseHold(_ action: EmergencyAction) {
-        if model.holdingAction == action { model.cancelHold() }
     }
 }
 

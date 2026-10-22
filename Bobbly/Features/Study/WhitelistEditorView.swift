@@ -114,6 +114,13 @@ struct WhitelistEditorView: View {
         let categories = draft.selection.categoryTokens.count
         let sites = draft.selection.webDomainTokens.count
 
+        if needsRepick {
+            Label("Screen Time access was reset, so this whitelist's apps need picking again.",
+                  systemImage: "arrow.triangle.2.circlepath")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.Palette.amber)
+        }
+
         Button {
             model.isPickerPresented = true
         } label: {
@@ -157,6 +164,12 @@ struct WhitelistEditorView: View {
                 .tint(Theme.Palette.reed)
             }
         }
+    }
+
+    /// The saved picks were voided by a Screen Time reset.
+    private var needsRepick: Bool {
+        guard let whitelistID else { return false }
+        return model.whitelists.first { $0.id == whitelistID }?.needsRepick ?? false
     }
 
     /// "1 category, 2 websites also allowed".
