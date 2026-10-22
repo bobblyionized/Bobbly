@@ -12,6 +12,9 @@ struct AccessSnapshot: Equatable, Sendable {
     var blockedAppKeys: Set<String>
     var grants: [UnlockGrant]
     var study: ActiveStudy?
+    /// Quick setup: whether the group ("one of your blocked apps") is blocked
+    /// at all. Settings › "Quick setup blocking" turns it off.
+    var groupBlockingEnabled: Bool = true
 
     static let empty = AccessSnapshot(isDetached: false, emergencyUntil: nil, blockedAppKeys: [], grants: [], study: nil)
 }
@@ -53,6 +56,7 @@ enum AccessPolicy {
     /// (whitelist wins, everything else blocked) > block list > allowed.
     static func decide(appName: String, snapshot: AccessSnapshot, now: Date) -> AccessDecision {
         let key = AppKey.normalize(appName)
+        if key == AppKey.group { return decideGroup(snapshot: snapshot, now: now) }
 
         if snapshot.isDetached { return .allowed(.detached) }
 
@@ -78,5 +82,27 @@ enum AccessPolicy {
         }
 
         return .allowed(.notBlocked)
+    }
+
+    /// GROUP mode (quick setup, `AppKey.group`): the automation only fires for
+    /// apps the user marked as distracting, so they are blocked as one unit.
+    ///
+    /// Order: detach > emergency > active group unlock > study session (group
+    /// apps are distracting by definition, never whitelisted) > quick-setup
+    /// blocking toggle.
+    static func decideGroup(snapshot: AccessSnapshot, now: Date) -> AccessDecision {
+        if snapshot.isDetached { return .allowed(.detached) }
+        if let until = snapshot.emergencyUntil, until > now {
+            return .allowed(.emergency(until: until))
+        }
+        if let grant = snapshot.grants
+            .filter({ $0.appKey == AppKey.group && $0.isActive(at: now) })
+            .max(by: { $0.expiresAt < $1.expiresAt }) {
+            return .allowed(.unlocked(until: grant.expiresAt))
+        }
+        if let study = snapshot.study, study.isActive(at: now) {
+            return .blocked(.studySession(whitelistName: study.whitelistName))
+        }
+        return snapshot.groupBlockingEnabled ? .blocked(.blockedApp) : .allowed(.notBlocked)
     }
 }

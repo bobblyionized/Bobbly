@@ -54,7 +54,35 @@ Some signers (for example free Apple IDs) can't keep the FamilyControls
 entitlement. Bobbly detects this at launch, switches to the **Shortcuts
 engine**, and shows it in Settings › Diagnostics. Nothing crashes.
 
-## Shortcuts fallback setup
+## Shortcuts quick setup (iOS 26+, recommended)
+
+One automation covers every distracting app. It has one action and needs no
+typing.
+
+1. Shortcuts › Automation › **+** › **App** › **Choose** › select every
+   distracting app at once › Done.
+2. Tick **Is Opened** (only) › **Run Immediately** › Next › **New Blank
+   Automation**.
+3. Search "Bobbly", add **Bobbly Gate**, leave App empty, and tap Done.
+
+When one of those apps opens:
+
+- If Bobbly allows it (an unlock is running, an emergency unblock is on, or
+  Bobbly is detached), the app just opens.
+- Otherwise Bobbly comes to the front with its Gate. If iOS won't allow that,
+  you get a notification to tap instead.
+
+The automation can't tell Bobbly which app opened, so your apps are treated
+as one group. An unlock covers all of them. Afterwards, swipe back to your app.
+
+Optional, for usage time in Stats and Search: add a second automation for
+the same apps with **Is Closed** › **Bobbly: App Closed**. Without it, Bobbly
+still counts how often you open them, under the name "Blocked apps".
+
+You can turn quick-setup blocking off in Settings. The automation then only
+tracks.
+
+## Shortcuts per-app setup (advanced / iOS < 26)
 
 iOS doesn't let apps create automations, so you add two personal automations
 per app in the Shortcuts app. The tutorial shows these steps for each app you

@@ -38,6 +38,7 @@ final class AppEnvironment {
 
     @ObservationIgnored private var didLaunch = false
     @ObservationIgnored private var sharedStateObserver: NSObjectProtocol?
+    @ObservationIgnored private var gateRequestObserver: NSObjectProtocol?
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
 
     var context: ModelContext { container.mainContext }
@@ -95,6 +96,8 @@ final class AppEnvironment {
         if !preferences.hasCompletedTutorial {
             router.presentTutorial()
         }
+        // Cold-launched by the Gate intent (continueInForeground)?
+        consumePendingGateRequest()
     }
 
     /// Called whenever the scene becomes active.
@@ -108,6 +111,19 @@ final class AppEnvironment {
         study.syncWithEngine()
         creditPassiveFocus()
         refreshAll()
+        consumePendingGateRequest()
+    }
+
+    /// Shows the Gate the quick-setup intent asked for (if still fresh).
+    /// Called on launch, on activation and on `.bobblyGateRequested`; the
+    /// request is cleared on first use so it never shows twice.
+    func consumePendingGateRequest(now: Date = Date()) {
+        guard let request = shared.pendingGateRequest else { return }
+        shared.pendingGateRequest = nil
+        guard request.isFresh(at: now) else { return }
+        let target = request.appName.flatMap { makeTarget(appName: $0, origin: .gate) }
+            ?? ChatTarget.blockedAppsGroup(origin: .gate)
+        router.presentGate(target)
     }
 
     /// Presents a sheet, first dismissing a full-screen cover if one is up
@@ -117,10 +133,18 @@ final class AppEnvironment {
         router.present(route)
     }
 
+    /// Shortcuts quick setup is guarding the "blocked apps" group: the Gate
+    /// automation has run at least once and its blocking toggle is on.
+    var isQuickSetupBlocking: Bool {
+        engines.kind == .shortcuts && !engines.status.isDetached
+            && shared.groupBlockingEnabled && shared.quickSetupRunStats.gateRuns > 0
+    }
+
     /// Credits protected time since the last credit to Bobbly's mood.
     private func creditPassiveFocus(now: Date = Date()) {
         let status = engines.status
-        let protecting = engines.state != .undetermined && !status.isDetached && status.hasAnythingBlocked
+        let protecting = !status.isDetached
+            && ((engines.state != .undetermined && status.hasAnythingBlocked) || isQuickSetupBlocking)
         let today = UsageAggregator.lastDays(1, now: now)
         let unlockedWindows = tracker.unlockEvents(in: today)
             .filter(\.granted)
@@ -169,6 +193,11 @@ final class AppEnvironment {
                 self.refreshAll()
             }
         }
+        gateRequestObserver = NotificationCenter.default.addObserver(
+            forName: .bobblyGateRequested, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.consumePendingGateRequest() }
+        }
     }
 
     // MARK: - Deep links
@@ -181,8 +210,8 @@ final class AppEnvironment {
     func handle(_ link: DeepLink) {
         switch link {
         case .gate(let appName, _):
-            let target = makeTarget(appName: appName, origin: .gate)
-                ?? ChatTarget(subject: .appName("App"), displayName: "this app", origin: .gate)
+            // No app (quick setup / group automation) → the "blocked apps" group.
+            let target = makeTarget(appName: appName, origin: .gate) ?? ChatTarget.blockedAppsGroup(origin: .gate)
             router.presentGate(target)
 
         case .chat(let appName, let source):
@@ -212,6 +241,9 @@ final class AppEnvironment {
     /// Builds a name-based target, enriching it with the tracked app's URL scheme.
     func makeTarget(appName: String?, origin: ChatOrigin) -> ChatTarget? {
         guard let appName, !appName.isEmpty else { return nil }
+        if AppKey.isGroup(appName) || AppKey.normalize(appName) == AppKey.normalize(AppKey.groupDisplayName) {
+            return ChatTarget.blockedAppsGroup(origin: origin)
+        }
         let key = AppKey.normalize(appName)
         let descriptor = FetchDescriptor<TrackedApp>(predicate: #Predicate { $0.appKey == key })
         let tracked = try? context.fetch(descriptor).first

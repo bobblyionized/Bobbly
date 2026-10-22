@@ -130,6 +130,30 @@ struct ChatTarget: Identifiable, Hashable {
     static func studySession(named name: String) -> ChatTarget {
         ChatTarget(subject: .studySession, displayName: name, origin: .studyEnd)
     }
+
+    /// Quick-setup GROUP target: "one of your blocked apps" (the automation
+    /// can't say which). Unlocks apply to the whole group; the app can't be
+    /// reopened by URL (`reopenURL == nil`) — the user swipes back to it.
+    static func blockedAppsGroup(origin: ChatOrigin) -> ChatTarget {
+        ChatTarget(subject: .appName(AppKey.group), displayName: AppKey.groupSubjectName, origin: origin, reopenURL: nil)
+    }
+
+    /// `true` for the quick-setup group target.
+    var isBlockedAppsGroup: Bool { subject.isBlockedAppsGroup }
+
+    /// Name usage / interruptions / unlocks are logged and shown under
+    /// ("Blocked apps" for the group, else `displayName`).
+    var trackingName: String { isBlockedAppsGroup ? AppKey.groupDisplayName : displayName }
+}
+
+extension UnlockSubject {
+    /// The quick-setup group ("one of your blocked apps").
+    static var blockedAppsGroup: UnlockSubject { .appName(AppKey.group) }
+
+    var isBlockedAppsGroup: Bool {
+        if case .appName(let name) = self { return AppKey.isGroup(name) }
+        return false
+    }
 }
 
 /// Final result of a conversation, shown as a banner/card by ChatView.
@@ -144,6 +168,33 @@ enum ChatOutcome: Equatable {
     case emergency
     /// Something failed (e.g. engine error) — message is user-facing.
     case failed(message: String)
+}
+
+/// How the user gets back to the unlocked app (result card / Gate).
+enum PostUnlockAction: Equatable {
+    /// Known app with a URL scheme: offer "Open <app>" → `openURL(url)`.
+    case reopen(appName: String, url: URL)
+    /// Unknown app (quick-setup group) or no scheme: "Unlocked for N min —
+    /// swipe back to your app" (home-indicator swipe / app switcher).
+    case swipeBack(minutes: Int, until: Date)
+
+    /// Derives the action from a chat outcome; `nil` unless it's a grant.
+    init?(outcome: ChatOutcome?) {
+        guard case .granted(let appName, let minutes, let until, _, let url)? = outcome else { return nil }
+        if let url {
+            self = .reopen(appName: appName, url: url)
+        } else {
+            self = .swipeBack(minutes: minutes, until: until)
+        }
+    }
+
+    /// Ready-made copy, e.g. "Unlocked for 10 min — swipe back to your app".
+    var message: String {
+        switch self {
+        case .reopen(let appName, _): return "Open \(appName)"
+        case .swipeBack(let minutes, _): return "Unlocked for \(minutes) min — swipe back to your app"
+        }
+    }
 }
 
 /// Running cooldown ("wait 45 s to unlock anyway").

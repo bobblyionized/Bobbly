@@ -10,7 +10,7 @@ import json
 import subprocess
 import sys
 
-PREFERRED = ["iPhone 16", "iPhone 16 Pro", "iPhone 15", "iPhone 15 Pro", "iPhone 17", "iPhone 17 Pro"]
+PREFERRED = ["iPhone 17", "iPhone 17 Pro", "iPhone 16", "iPhone 16 Pro", "iPhone 15", "iPhone 15 Pro"]
 
 
 def run(*args):

@@ -17,9 +17,35 @@ final class SettingsViewModel {
     let freeUnlockOptions = [0, 1, 2, 3, 4, 5, 7, 10]
     let emergencyMinuteOptions = [15, 30, 60, 120, 240]
 
+    /// Quick setup › "Blocking on/off" (group automation). Off = the automation
+    /// only tracks usage; the Gate never appears for the group.
+    var quickSetupBlockingEnabled: Bool {
+        didSet { env.shared.groupBlockingEnabled = quickSetupBlockingEnabled }
+    }
+
+    /// "Test it" status for the quick-setup automations (refreshed in `refresh()`).
+    private(set) var quickSetupStatus: QuickSetupStatus
+
     init(env: AppEnvironment) {
         self.env = env
+        self.quickSetupBlockingEnabled = env.shared.groupBlockingEnabled
+        self.quickSetupStatus = QuickSetupStatus(env.shared.quickSetupRunStats)
     }
+
+    // MARK: Shortcuts setup
+
+    /// `.quick` (one automation, default on iOS 26+) or `.perApp` (advanced).
+    var setupMode: SetupMode {
+        get { env.preferences.setupMode }
+        set { env.preferences.setupMode = newValue }
+    }
+
+    /// Quick setup needs iOS 26; hide the choice (and show per-app) otherwise.
+    var isQuickSetupAvailable: Bool { QuickSetup.isAvailable }
+    var setupModeOptions: [SetupMode] { isQuickSetupAvailable ? SetupMode.allCases : [.perApp] }
+
+    /// Settings rows about Shortcuts setup only matter on the Shortcuts engine.
+    var showsShortcutsSetup: Bool { env.engines.kind == .shortcuts }
 
     // MARK: Preferences (two-way; use `@Bindable var model` + `$model.dailyFreeUnlocks`)
 
@@ -83,6 +109,10 @@ final class SettingsViewModel {
     func refresh() {
         env.engines.refresh()
         didCopyDiagnostics = false
+        quickSetupStatus = QuickSetupStatus(env.shared.quickSetupRunStats)
+        if quickSetupBlockingEnabled != env.shared.groupBlockingEnabled {
+            quickSetupBlockingEnabled = env.shared.groupBlockingEnabled
+        }
     }
 
     func openTutorial() { env.router.presentTutorial() }
@@ -113,6 +143,7 @@ final class SettingsViewModel {
             "Data store: \(d.usingFallbackDataStore ? "in-memory fallback" : "on disk")",
             "Notifications: \(notificationsAuthorized ? "on" : "off")",
             "Monitored activities: \(d.monitoredActivities.count)",
+            "Shortcuts setup: \(setupMode.title); Gate runs: \(quickSetupStatus.gateRuns); App Closed runs: \(quickSetupStatus.closedRuns); quick-setup blocking: \(quickSetupBlockingEnabled ? "on" : "off")",
         ]
         if let error = d.lastAuthorizationError { lines.append("Last auth error: \(error)") }
         if let error = d.lastMonitoringError { lines.append("Last monitoring error: \(error)") }

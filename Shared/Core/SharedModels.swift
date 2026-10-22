@@ -28,6 +28,26 @@ enum AppKey {
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()
     }
+
+    // MARK: Quick-setup group ("one of your blocked apps")
+
+    /// Reserved key for GROUP mode: a single "When <several apps> Is Opened"
+    /// automation can't tell Bobbly which app opened, so all of them share
+    /// one access decision and one unlock grant under this key.
+    static let group = "__bobbly_group__"
+
+    /// The bucket name group-mode usage/interruptions are logged under
+    /// (shows as one "Blocked apps" entry in Stats and Search).
+    static let groupDisplayName = "Blocked apps"
+
+    /// How Bobbly refers to the unknown app in group-mode copy ("Why do you
+    /// want to open this app?").
+    static let groupSubjectName = "this app"
+
+    static func isGroup(_ name: String?) -> Bool {
+        guard let name else { return false }
+        return normalize(name) == group
+    }
 }
 
 /// JSON coding helpers for opaque FamilyControls tokens and selections.
@@ -109,6 +129,30 @@ struct StudyEndRecord: Codable, Hashable, Sendable {
     var sessionID: UUID
     var endedAt: Date
     var reason: Reason
+}
+
+/// Written by `BobblyGateIntent` when it decides to bring up the Gate; the app
+/// consumes it when it reaches the foreground (or via the in-process
+/// `.bobblyGateRequested` notification). Stale after `PendingGateRequest.lifetime`.
+struct PendingGateRequest: Codable, Hashable, Sendable {
+    /// `nil` = group mode (unknown app).
+    var appName: String?
+    var requestedAt: Date
+
+    static let lifetime: TimeInterval = 120
+
+    func isFresh(at now: Date) -> Bool {
+        let age = now.timeIntervalSince(requestedAt)
+        return age >= -5 && age < Self.lifetime
+    }
+}
+
+/// "Test it" evidence for the quick-setup automations.
+struct QuickSetupRunStats: Codable, Hashable, Sendable {
+    var gateRuns: Int = 0
+    var lastGateRunAt: Date?
+    var closedRuns: Int = 0
+    var lastClosedRunAt: Date?
 }
 
 /// Display name of a shielded app, keyed by its encoded token.

@@ -36,7 +36,21 @@ final class GateViewModel {
     var appName: String { target.displayName }
     var isAllowedNow: Bool { decision.isAllowed }
     /// Re-opens the app (Shortcuts engine) when it's allowed. Use with `openURL`.
+    /// Always `nil` in group mode (Bobbly doesn't know which app opened).
     var reopenURL: URL? { target.reopenURL }
+
+    /// Quick-setup group mode: the automation covers several apps and can't say
+    /// which one opened. Copy talks about "that app" / "your blocked apps".
+    var isGroupMode: Bool { target.isBlockedAppsGroup }
+
+    /// While an unlock is running: how to get back to the app —
+    /// `.reopen(…)` → "Open Instagram", `.swipeBack(…)` → "swipe back to your app".
+    var postUnlockAction: PostUnlockAction? {
+        guard let until = unlockedUntil else { return nil }
+        if let url = reopenURL { return .reopen(appName: appName, url: url) }
+        let minutes = max(1, Int((until.timeIntervalSinceNow / 60).rounded(.up)))
+        return .swipeBack(minutes: minutes, until: until)
+    }
 
     // MARK: Actions
 
@@ -45,16 +59,20 @@ final class GateViewModel {
         refresh()
         if !decision.isAllowed && !didLogInterruption {
             didLogInterruption = true
-            // CheckAccessIntent usually logged this attempt a moment ago.
-            env.tracker.logInterruptionIfNew(appName: appName, source: .gate)
+            // CheckAccessIntent / the Gate intent usually logged this attempt a moment ago.
+            env.tracker.logInterruptionIfNew(appName: target.trackingName, source: .gate)
             env.home.refresh()
         }
     }
 
     func refresh() {
         let now = Date()
-        decision = env.engines.decision(forAppNamed: appName, now: now)
+        decision = env.engines.decision(forAppNamed: isGroupMode ? AppKey.group : appName, now: now)
         unlocksToday = env.shared.unlocksToday(now: now)
+        if isGroupMode {
+            applyGroupCopy()
+            return
+        }
         switch decision {
         case .allowed(.unlocked(let until)):
             unlockedUntil = until
@@ -74,6 +92,30 @@ final class GateViewModel {
             message = unlocksToday == 0
                 ? "No unlocks yet today. Nice!"
                 : "You've unlocked apps \(unlocksToday) time\(unlocksToday == 1 ? "" : "s") today."
+        }
+    }
+
+    /// Group-mode copy (the opened app is unknown).
+    private func applyGroupCopy() {
+        switch decision {
+        case .allowed(.unlocked(let until)):
+            unlockedUntil = until
+            headline = "Your apps are unlocked"
+            message = "Swipe back to your app. Bobbly locks them again when the time is up."
+        case .allowed:
+            unlockedUntil = nil
+            headline = "You're good to go"
+            message = "Bobbly isn't blocking your apps right now. Swipe back to your app."
+        case .blocked(.studySession(let name)):
+            unlockedUntil = nil
+            headline = "You're studying"
+            message = "\(name) is running, so your distracting apps stay closed until it ends."
+        case .blocked(.blockedApp):
+            unlockedUntil = nil
+            headline = "That app is blocked"
+            message = unlocksToday == 0
+                ? "It's one of the apps you asked Bobbly to guard. No unlocks yet today. Nice!"
+                : "It's one of the apps you asked Bobbly to guard. You've unlocked \(unlocksToday) time\(unlocksToday == 1 ? "" : "s") today."
         }
     }
 

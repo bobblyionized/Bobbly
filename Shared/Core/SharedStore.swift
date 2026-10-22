@@ -42,6 +42,9 @@ final class SharedStore: @unchecked Sendable {
         case tokensRevokedAt
         case studyEndRecords
         case importedInterruptionsByDay
+        case groupBlockingEnabled
+        case pendingGateRequest
+        case quickSetupRunStats
 
         var name: String { "bobbly.shared." + rawValue }
     }
@@ -315,6 +318,40 @@ final class SharedStore: @unchecked Sendable {
         defaults.set(log, forKey: Key.monitorLog.name)
     }
 
+    // MARK: - Quick setup (Shortcuts group mode)
+
+    /// Settings › "Quick setup blocking". Off = the group automation only
+    /// tracks usage and never shows the Gate. Default on.
+    var groupBlockingEnabled: Bool {
+        get { defaults.object(forKey: Key.groupBlockingEnabled.name) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.groupBlockingEnabled.name) }
+    }
+
+    /// Set by `BobblyGateIntent` before it brings Bobbly to the foreground.
+    var pendingGateRequest: PendingGateRequest? {
+        get { TokenCoding.decode(PendingGateRequest.self, from: defaults.data(forKey: Key.pendingGateRequest.name)) }
+        set { defaults.set(newValue.flatMap { TokenCoding.encode($0) }, forKey: Key.pendingGateRequest.name) }
+    }
+
+    var quickSetupRunStats: QuickSetupRunStats {
+        get { TokenCoding.decode(QuickSetupRunStats.self, from: defaults.data(forKey: Key.quickSetupRunStats.name)) ?? QuickSetupRunStats() }
+        set { defaults.set(TokenCoding.encode(newValue), forKey: Key.quickSetupRunStats.name) }
+    }
+
+    func recordGateIntentRun(at date: Date = Date()) {
+        var stats = quickSetupRunStats
+        stats.gateRuns += 1
+        stats.lastGateRunAt = date
+        quickSetupRunStats = stats
+    }
+
+    func recordAppClosedIntentRun(at date: Date = Date()) {
+        var stats = quickSetupRunStats
+        stats.closedRuns += 1
+        stats.lastClosedRunAt = date
+        quickSetupRunStats = stats
+    }
+
     // MARK: - Snapshot for pure policy evaluation
 
     func accessSnapshot() -> AccessSnapshot {
@@ -323,7 +360,8 @@ final class SharedStore: @unchecked Sendable {
             emergencyUntil: emergencyUntil,
             blockedAppKeys: Set(blockedAppKeys),
             grants: grants,
-            study: activeStudy
+            study: activeStudy,
+            groupBlockingEnabled: groupBlockingEnabled
         )
     }
 

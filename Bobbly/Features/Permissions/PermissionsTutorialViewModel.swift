@@ -97,10 +97,33 @@ final class PermissionsTutorialViewModel {
     private(set) var trackedAppKeys: Set<String> = []
     /// Times Bobbly's intents have run (proves the automations work).
     private(set) var automationRunCount: Int = 0
+    /// Quick setup "Test it" status (✅ "Automation detected").
+    private(set) var quickSetupStatus = QuickSetupStatus(QuickSetupRunStats())
 
     init(env: AppEnvironment) {
         self.env = env
     }
+
+    // MARK: Shortcuts setup mode
+
+    /// `.quick` (one automation, iOS 26+) or `.perApp`. Changing it rebuilds the steps.
+    var setupMode: SetupMode {
+        get { env.preferences.setupMode }
+        set {
+            env.preferences.setupMode = newValue
+            rebuildSteps()
+        }
+    }
+
+    var isQuickSetupAvailable: Bool { QuickSetup.isAvailable }
+    var setupModeOptions: [SetupMode] { isQuickSetupAvailable ? SetupMode.allCases : [.perApp] }
+
+    /// Quick setup: the one required automation, step by step.
+    var quickSetupSteps: [String] { QuickSetup.steps }
+    /// Quick setup: optional "Is Closed" automation for usage time.
+    var quickSetupOptionalSteps: [String] { QuickSetup.optionalTrackingSteps }
+    /// Action names as they appear in Shortcuts ("Bobbly Gate", "Bobbly: App Closed").
+    var quickSetupActionNames: (gate: String, closed: String) { (QuickSetup.gateActionName, QuickSetup.closedActionName) }
 
     // MARK: Derived
 
@@ -130,6 +153,7 @@ final class PermissionsTutorialViewModel {
         let tracked = (try? env.context.fetch(FetchDescriptor<TrackedApp>())) ?? []
         trackedAppKeys = Set(tracked.map(\.appKey))
         automationRunCount = ((try? env.context.fetchCount(FetchDescriptor<UsageSession>())) ?? 0)
+        quickSetupStatus = QuickSetupStatus(env.shared.quickSetupRunStats)
         rebuildSteps()
     }
 
@@ -272,17 +296,45 @@ final class PermissionsTutorialViewModel {
                     : TutorialButton(title: "Allow notifications", systemImage: "bell", action: .requestNotifications)),
             secondary: nil))
 
-        built.append(TutorialStep(
-            id: .pickApps, number: 0, title: "Pick apps to block",
-            body: "Choose the apps that steal your time. Optionally build a study whitelist: the only apps allowed while you study.",
-            systemImage: "apps.iphone",
-            instructions: ["Tap Choose apps and select apps, categories or websites.", "Study whitelists live in the Study tab."],
-            status: status.hasAnythingBlocked ? .complete : .incomplete,
-            statusText: status.hasAnythingBlocked ? "Blocking \(status.blockedAppCount + status.blockedCategoryCount + status.blockedWebDomainCount) item(s)" : "Nothing blocked yet",
-            primary: TutorialButton(title: "Choose apps", systemImage: "plus.app", action: .pickBlockedApps),
-            secondary: TutorialButton(title: "Build a study whitelist", systemImage: "book", action: .buildWhitelist)))
+        let quick = fallback && setupMode == .quick
+        if quick {
+            // Quick setup: the apps are chosen inside the Shortcuts automation.
+            let detected = quickSetupStatus.isDetected
+            built.append(TutorialStep(
+                id: .pickApps, number: 0, title: "Your apps",
+                body: "With quick setup you choose your distracting apps right inside the Shortcuts automation (next step). Optionally build a study whitelist.",
+                systemImage: "apps.iphone",
+                instructions: ["Pick the apps in the next step.", "Study whitelists live in the Study tab."],
+                status: detected ? .complete : .optional,
+                statusText: detected ? "Chosen in your Bobbly Gate automation" : "Chosen in the next step",
+                primary: nil,
+                secondary: TutorialButton(title: "Build a study whitelist", systemImage: "book", action: .buildWhitelist)))
+        } else {
+            built.append(TutorialStep(
+                id: .pickApps, number: 0, title: "Pick apps to block",
+                body: "Choose the apps that steal your time. Optionally build a study whitelist: the only apps allowed while you study.",
+                systemImage: "apps.iphone",
+                instructions: ["Tap Choose apps and select apps, categories or websites.", "Study whitelists live in the Study tab."],
+                status: status.hasAnythingBlocked ? .complete : .incomplete,
+                statusText: status.hasAnythingBlocked ? "Blocking \(status.blockedAppCount + status.blockedCategoryCount + status.blockedWebDomainCount) item(s)" : "Nothing blocked yet",
+                primary: TutorialButton(title: "Choose apps", systemImage: "plus.app", action: .pickBlockedApps),
+                secondary: TutorialButton(title: "Build a study whitelist", systemImage: "book", action: .buildWhitelist)))
+        }
 
-        if fallback {
+        if quick {
+            let detected = quickSetupStatus.isDetected
+            built.append(TutorialStep(
+                id: .shortcutsFallback, number: 0, title: "One Shortcuts automation",
+                body: "Screen Time access isn't available, so Bobbly uses one Shortcuts automation for all your distracting apps. No typing, one action.",
+                systemImage: "square.stack.3d.up",
+                instructions: QuickSetup.steps,
+                status: detected ? .complete : .incomplete,
+                statusText: detected
+                    ? "Automation detected (\(quickSetupStatus.gateRuns) run\(quickSetupStatus.gateRuns == 1 ? "" : "s"))"
+                    : "Not detected yet: open one of your apps to test it",
+                primary: TutorialButton(title: "Open Shortcuts", systemImage: "arrow.up.forward.app", action: .openShortcutsApp),
+                secondary: nil))
+        } else if fallback {
             let working = automationRunCount > 0
             built.append(TutorialStep(
                 id: .shortcutsFallback, number: 0, title: "Shortcuts automations",

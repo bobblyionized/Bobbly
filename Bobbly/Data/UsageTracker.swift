@@ -22,6 +22,19 @@ final class UsageTracker {
         save()
     }
 
+    /// "App opened" from the quick-setup Gate. Without the optional "Is Closed"
+    /// automation there will never be a close event, so the open is logged as a
+    /// zero-length session: Stats/Search count the open without inventing time.
+    func logGateOpen(appName: String, tracksTime: Bool, at date: Date = Date()) {
+        if tracksTime {
+            logOpened(appName: appName, at: date)
+            return
+        }
+        closeOpenSessions(appKey: AppKey.normalize(appName), at: date)
+        context.insert(UsageSession(appName: displayName(for: appName), start: date, end: date))
+        save()
+    }
+
     /// "App closed": ends the most recent open session; ignores closes without an open.
     func logClosed(appName: String, at date: Date = Date()) {
         closeOpenSessions(appKey: AppKey.normalize(appName), at: date)

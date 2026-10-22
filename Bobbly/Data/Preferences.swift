@@ -16,6 +16,7 @@ final class Preferences {
         static let defaultEmergencyMinutes = "bobbly.prefs.defaultEmergencyMinutes"
         static let hapticsEnabled = "bobbly.prefs.hapticsEnabled"
         static let companionName = "bobbly.prefs.companionName"
+        static let setupMode = "bobbly.prefs.setupMode"
     }
 
     /// The tutorial auto-presents on launch until this is `true`.
@@ -37,6 +38,11 @@ final class Preferences {
         didSet { shared.dailyFreeUnlocks = dailyFreeUnlocks }
     }
 
+    /// Shortcuts engine setup style. Defaults to `.quick` where supported (iOS 26+).
+    var setupMode: SetupMode {
+        didSet { defaults.set(setupMode.rawValue, forKey: Key.setupMode) }
+    }
+
     init(defaults: UserDefaults = .standard, shared: SharedStore = .shared) {
         self.defaults = defaults
         self.shared = shared
@@ -44,5 +50,8 @@ final class Preferences {
         self.defaultEmergencyMinutes = (defaults.object(forKey: Key.defaultEmergencyMinutes) as? Int) ?? 30
         self.hapticsEnabled = (defaults.object(forKey: Key.hapticsEnabled) as? Bool) ?? true
         self.dailyFreeUnlocks = shared.dailyFreeUnlocks
+        let storedMode = defaults.string(forKey: Key.setupMode).flatMap(SetupMode.init(rawValue:))
+        // Quick setup needs iOS 26; never come back as `.quick` where it can't work.
+        self.setupMode = (storedMode == .quick && !QuickSetup.isAvailable) ? .perApp : (storedMode ?? SetupMode.recommended)
     }
 }

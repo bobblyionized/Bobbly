@@ -60,7 +60,7 @@ final class ShortcutsEngine: BlockingEngine {
             for existing in shared.grants where existing.appKey == key {
                 revokeUnlock(id: existing.id)
             }
-            let name = subjects.count == 1 ? displayName : rawName
+            let name = subjects.count == 1 ? displayName : (AppKey.isGroup(rawName) ? AppKey.groupDisplayName : rawName)
             let grant = UnlockGrant(appKey: key, tokenData: nil, displayName: name, grantedAt: now, expiresAt: expires)
             shared.addGrant(grant)
             if postsNotifications {

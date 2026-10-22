@@ -71,6 +71,19 @@ final class HomeViewModel {
     /// Shortcuts engine: minutes in tracked apps today. `nil` under FamilyControls
     /// (embed the `todayReport…` DeviceActivityReport instead).
     private(set) var screenMinutesToday: Double?
+    /// Shortcuts quick setup is guarding "the apps in your Bobbly Gate
+    /// automation" (Bobbly doesn't know which apps those are). With this,
+    /// `protection` is `.protecting(blockedCount:)` even when the count is 0 —
+    /// show `blockingSummary` instead of a count.
+    private(set) var isGroupBlocking = false
+
+    /// Ready-made status line: "Blocking 4 apps" / "Blocking the apps in your Bobbly Gate automation".
+    var blockingSummary: String {
+        let named = blockedAppCount + blockedCategoryCount + blockedWebsiteCount
+        if isGroupBlocking && named == 0 { return "Blocking the apps in your Bobbly Gate automation" }
+        if isGroupBlocking { return "Blocking \(named) app\(named == 1 ? "" : "s") + your Bobbly Gate apps" }
+        return "Blocking \(named) app\(named == 1 ? "" : "s")"
+    }
 
     /// Quick actions in display order.
     let quickActions: [HomeQuickAction] = HomeQuickAction.allCases
@@ -141,7 +154,9 @@ final class HomeViewModel {
             screenMinutesToday = nil
         }
 
-        protection = Self.protectionState(status: status, engineState: env.engines.state, now: now)
+        isGroupBlocking = env.isQuickSetupBlocking
+        protection = Self.protectionState(status: status, engineState: env.engines.state, now: now,
+                                          groupBlocking: isGroupBlocking)
     }
 
     func perform(_ action: HomeQuickAction) {
@@ -172,11 +187,17 @@ final class HomeViewModel {
 
     // MARK: Helpers
 
-    static func protectionState(status: EngineStatus, engineState: EngineSelectionState, now: Date) -> ProtectionState {
+    /// - Parameter groupBlocking: Shortcuts quick setup is guarding its app group
+    ///   (counts as "something blocked" even with no named apps).
+    static func protectionState(status: EngineStatus, engineState: EngineSelectionState, now: Date,
+                                groupBlocking: Bool = false) -> ProtectionState {
         if status.isDetached || engineState == .detached { return .detached }
         if let until = status.emergencyUntil, until > now { return .emergency(until: until) }
         if let study = status.study { return .studying(name: study.whitelistName, until: study.endsAt) }
         if let first = status.activeUnlocks.first { return .unlocked(appName: first.displayName, until: first.expiresAt) }
+        if groupBlocking {
+            return .protecting(blockedCount: status.blockedAppCount + status.blockedCategoryCount + status.blockedWebDomainCount)
+        }
         if engineState == .undetermined || !status.hasAnythingBlocked { return .setupNeeded }
         return .protecting(blockedCount: status.blockedAppCount + status.blockedCategoryCount + status.blockedWebDomainCount)
     }

@@ -614,6 +614,88 @@ What remains can only be confirmed on a real device or by the first CI run.
     (status `.denied`, or the user cancelling the prompt). No view change
     needed; `lastAuthorizationError` appears in diagnostics.
 
+- **2026-10-22: Shortcuts "Quick setup" (GROUP mode). Additive only.** One
+  automation covers every distracting app: "When <apps> Is Opened → Run
+  Immediately → **Bobbly Gate**". The trigger can't say which app opened, so
+  those apps form one group. The group has one access decision and one unlock,
+  and its usage is logged under one "Blocked apps" bucket. Requires iOS 26;
+  older iOS keeps the per-app setup.
+  - **Setup mode**
+    - `SetupMode`: `.quick` (default on iOS 26+) or `.perApp`. Each has
+      `title`, `subtitle` and `id`; `SetupMode.recommended` gives the default.
+    - `SettingsViewModel`:
+      - `setupMode: SetupMode` **rw**
+      - `setupModeOptions: [SetupMode]` (only `.perApp` on iOS < 26)
+      - `isQuickSetupAvailable: Bool`
+      - `showsShortcutsSetup: Bool` (show the setup rows only on the
+        Shortcuts engine)
+    - `PermissionsTutorialViewModel`: `setupMode` **rw** (rebuilds the
+      steps), `setupModeOptions` and `isQuickSetupAvailable`.
+  - **Quick-setup steps**
+    - `QuickSetup.steps: [String]` is the one required automation.
+      `QuickSetup.optionalTrackingSteps: [String]` adds the optional "Is
+      Closed" automation, which gives usage time.
+    - `QuickSetup.gateActionName` is "Bobbly Gate";
+      `QuickSetup.closedActionName` is "Bobbly: App Closed".
+    - The tutorial VM mirrors these as `quickSetupSteps`,
+      `quickSetupOptionalSteps` and `quickSetupActionNames`.
+    - When `setupMode == .quick`, the tutorial's `.shortcutsFallback` step
+      uses these steps and gets ✅ once the automation has run. Its
+      `.pickApps` step becomes "Your apps": optional, and ✅ when detected.
+  - **Automation detected ("Test it")**
+    - `QuickSetupStatus` has `gateRuns`, `lastGateRunAt: Date?`,
+      `closedRuns`, `lastClosedRunAt: Date?`, `isDetected` (✅ "Automation
+      detected") and `tracksUsageTime`.
+    - Read it from `SettingsViewModel.quickSetupStatus` or
+      `PermissionsTutorialViewModel.quickSetupStatus`; both refresh in
+      `refresh()` / `refreshStatuses()`.
+  - **Blocking toggle:** `SettingsViewModel.quickSetupBlockingEnabled: Bool`
+    **rw** ("Quick setup blocking"). When off, the automation only tracks
+    usage and the Gate never appears. A study session still blocks.
+  - **Home**
+    - `HomeViewModel.isGroupBlocking: Bool` is true while the quick-setup
+      automation guards its apps.
+    - In that state `protection` is `.protecting(blockedCount:)`, and the
+      count can be **0**. Show `HomeViewModel.blockingSummary: String` (e.g.
+      "Blocking the apps in your Bobbly Gate automation") instead of a count.
+    - A group unlock appears as `.unlocked(appName: "Blocked apps", until:)`.
+      In `activeUnlocks`, check `unlock.subject.isBlockedAppsGroup`.
+  - **Gate (group mode)**
+    - `GateViewModel.isGroupMode: Bool`. The copy is already group-aware:
+      "That app is blocked" / "Your apps are unlocked" / "You're good to go".
+    - `GateViewModel.postUnlockAction: PostUnlockAction?` is non-nil while an
+      unlock runs. `reopenURL` is always nil in group mode.
+  - **Chat (group mode)**
+    - `ChatViewModel.isGroupConversation: Bool`. `target.displayName` is "this
+      app"; the header can say "About this app" or "About your blocked apps".
+    - `ChatViewModel.postUnlockAction: PostUnlockAction?` is derived from
+      `outcome`.
+    - Strictness and companion rules apply unchanged.
+    - In quick mode, a Chat-tab unlock of a named app also unlocks the group.
+  - **`PostUnlockAction`**
+    - `.reopen(appName:url:)`: "Open Instagram" via `openURL(url)`.
+    - `.swipeBack(minutes:until:)`: group mode or no URL scheme.
+    - `.message` is ready-made copy, e.g. "Unlocked for 10 min — swipe back to
+      your app".
+  - **Group helpers**
+    - `ChatTarget.blockedAppsGroup(origin:)`, `ChatTarget.isBlockedAppsGroup`,
+      `ChatTarget.trackingName` ("Blocked apps" for the group).
+    - `UnlockSubject.blockedAppsGroup` and `.isBlockedAppsGroup`.
+    - `AppKey.group` is a reserved key; don't display it.
+    - `AppKey.groupDisplayName` is "Blocked apps"; `AppKey.groupSubjectName`
+      is "this app".
+    - `UnlockSubject` gets **no new case**: the group is
+      `.appName(AppKey.group)`. Existing switches keep compiling, and
+      `AppSubjectLabel` shows `fallbackName`.
+  - **Stats / Search:** group usage and interruptions appear as one app
+    named **"Blocked apps"**: a series in charts, a top-apps row and a search
+    suggestion. Without the optional "Is Closed" automation it shows opens
+    with 0 minutes.
+  - **Routing:** `bobbly://gate` with no `app` now opens the group Gate. The
+    Gate intent's pending request is shown automatically on launch,
+    activation, or in-process via `.bobblyGateRequested`
+    (`AppEnvironment.consumePendingGateRequest()`). No view change needed.
+
 - **2026-10-22 (final review): behavior only, no API changes.**
   - `SettingsViewModel.canRetryScreenTime` is also true while FamilyControls
     is selected but not authorized.

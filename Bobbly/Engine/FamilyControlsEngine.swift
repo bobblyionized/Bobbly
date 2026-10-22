@@ -92,7 +92,8 @@ final class FamilyControlsEngine: BlockingEngine {
                     removeGrantAndTrigger(existing.id)
                 }
                 grants.append(UnlockGrant(appKey: key, tokenData: nil,
-                                          displayName: subjects.count == 1 ? displayName : name,
+                                          displayName: subjects.count == 1 ? displayName
+                                              : (AppKey.isGroup(name) ? AppKey.groupDisplayName : name),
                                           grantedAt: now, expiresAt: expires))
             case .studySession:
                 break

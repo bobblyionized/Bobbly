@@ -11,6 +11,7 @@ enum BobblyNotifications {
 
     enum ID {
         static let talkToBobbly = "com.bobbly.notification.talk"
+        static let gateRequest = "com.bobbly.notification.gate"
         static let emergencyEnded = "com.bobbly.notification.emergencyEnded"
         static let studyEnded = "com.bobbly.notification.studyEnded"
         static func unlockEnding(_ grantID: UUID) -> String { "com.bobbly.notification.unlockEnding.\(grantID.uuidString)" }
@@ -28,6 +29,19 @@ enum BobblyNotifications {
         content.interruptionLevel = .active
         content.userInfo = [urlKey: BobblyLink.chat(appName: appName, source: .shield).absoluteString]
         post(id: ID.talkToBobbly, content: content, after: nil)
+    }
+
+    /// Fallback when the Gate intent can't bring Bobbly to the foreground
+    /// (system declined): tap to open the Gate. `appName == nil` = group mode.
+    static func postGateRequest(appName: String?) {
+        let content = UNMutableNotificationContent()
+        content.title = "Bobbly is here"
+        content.body = appName.map { "\($0) is blocked. Tap to talk to Bobbly." }
+            ?? "That app is blocked. Tap to talk to Bobbly."
+        content.sound = .default
+        content.interruptionLevel = .active
+        content.userInfo = [urlKey: BobblyLink.gate(appName: appName, source: .notification).absoluteString]
+        post(id: ID.gateRequest, content: content, after: nil)
     }
 
     /// Warns shortly before an unlock ends.

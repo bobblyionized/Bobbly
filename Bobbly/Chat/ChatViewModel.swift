@@ -74,6 +74,15 @@ final class ChatViewModel {
 
     var hasConversation: Bool { !messages.isEmpty }
 
+    /// Quick-setup group conversation ("one of your blocked apps" — Bobbly
+    /// doesn't know which app opened).
+    var isGroupConversation: Bool { target?.isBlockedAppsGroup == true }
+
+    /// What the result card offers after a grant (`nil` when there's no grant).
+    var postUnlockAction: PostUnlockAction? {
+        PostUnlockAction(outcome: outcome)
+    }
+
     // MARK: Actions
 
     /// Starts a conversation if none is running (Chat tab opened directly).
@@ -225,8 +234,9 @@ final class ChatViewModel {
     private func apply(_ decision: ChatDecision) {
         switch decision {
         case .grant(let minutes):
-            if let subject = target?.subject, subject != .studySession {
-                applyGrant(subjects: [subject], displayName: target?.displayName ?? engine.subjectName ?? "App", minutes: minutes)
+            if let target, target.subject != .studySession {
+                // Group mode logs/shows the unlock as "Blocked apps".
+                applyGrant(subjects: [target.subject], displayName: target.trackingName, minutes: minutes)
             } else if env.engines.kind == .familyControls {
                 // Token unknown (chat started from the tab): ask which app(s).
                 // Starts empty so confirming never unlocks the whole block list.
@@ -237,8 +247,13 @@ final class ChatViewModel {
                 let name = engine.subjectName ?? "App"
                 let canonical = env.makeTarget(appName: name, origin: .chatTab)
                 if target == nil, let canonical { target = canonical }
-                applyGrant(subjects: [.appName(canonical?.displayName ?? name)],
-                           displayName: canonical?.displayName ?? name, minutes: minutes)
+                var subjects: [UnlockSubject] = [canonical?.subject ?? .appName(name)]
+                // The quick-setup automation can't tell apps apart, so a named
+                // unlock from the Chat tab must also open the group.
+                if env.isQuickSetupBlocking && !(subjects.first?.isBlockedAppsGroup ?? false) {
+                    subjects.append(.blockedAppsGroup)
+                }
+                applyGrant(subjects: subjects, displayName: canonical?.trackingName ?? name, minutes: minutes)
             }
 
         case .endStudy:
@@ -247,7 +262,7 @@ final class ChatViewModel {
 
         case .declined:
             env.companion.recordResistedTemptation()
-            env.tracker.logUnlock(appName: target?.displayName ?? engine.subjectName ?? "App",
+            env.tracker.logUnlock(appName: target?.trackingName ?? engine.subjectName ?? "App",
                                   appKey: target?.subject.appKey, reason: engine.reasonText,
                                   category: (engine.category ?? .unclear).rawValue, minutes: 0, granted: false)
             outcome = .declined
