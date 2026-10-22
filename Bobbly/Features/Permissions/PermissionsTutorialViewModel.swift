@@ -234,6 +234,16 @@ final class PermissionsTutorialViewModel {
             primary: nil, secondary: nil))
 
         let screenTimeDone = fcStatus == .approved
+        let screenTimeStatusText: String
+        if screenTimeDone {
+            screenTimeStatusText = "Screen Time access granted"
+        } else if let error = env.engines.lastAuthorizationError {
+            screenTimeStatusText = "Didn't work: \(error)"
+        } else if fcStatus == .denied {
+            screenTimeStatusText = "Denied — Bobbly is using Shortcuts mode"
+        } else {
+            screenTimeStatusText = "Not allowed yet"
+        }
         built.append(TutorialStep(
             id: .screenTime, number: 0, title: "Screen Time access",
             body: "This lets Bobbly put a real shield over apps you choose. Your data never leaves your phone.",
@@ -241,11 +251,11 @@ final class PermissionsTutorialViewModel {
             instructions: [
                 "Tap Allow Screen Time access.",
                 "Confirm with Face ID / your passcode.",
+                "No prompt at all usually means the signed app lost its Screen Time (family-controls) entitlement. Re-sign with a certificate that keeps it.",
                 "If it fails, Bobbly switches to Shortcuts mode automatically.",
             ],
             status: screenTimeDone ? .complete : .incomplete,
-            statusText: screenTimeDone ? "Screen Time access granted"
-                : (fcStatus == .denied ? "Denied — Bobbly is using Shortcuts mode" : "Not allowed yet"),
+            statusText: screenTimeStatusText,
             primary: screenTimeDone ? nil : TutorialButton(title: "Allow Screen Time access", systemImage: "hand.raised", action: .requestScreenTime),
             secondary: nil))
 
