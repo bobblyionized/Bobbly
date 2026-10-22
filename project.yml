@@ -1,0 +1,165 @@
+name: Bobbly
+
+options:
+  bundleIdPrefix: com.bobbly
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+# Signing is intentionally disabled: CI produces an UNSIGNED Bobbly.ipa and the
+# user re-signs it with their own sideloading tool. Entitlements are still
+# referenced per target (CODE_SIGN_ENTITLEMENTS) and are embedded by `ldid -S`
+# in CI so the signer can carry them over.
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    GENERATE_INFOPLIST_FILE: "NO"
+    ENABLE_PREVIEWS: "YES"
+
+targets:
+
+  # ---------------------------------------------------------------- App
+  Bobbly:
+    type: application
+    platform: iOS
+    sources:
+      - path: Bobbly
+        excludes:
+          - "**/Info.plist"
+          - "**/*.entitlements"
+          - "**/*.md"
+      - path: Shared/Core
+      - path: Shared/Report
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app
+        PRODUCT_NAME: Bobbly
+        INFOPLIST_FILE: Bobbly/App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Bobbly/App/Bobbly.entitlements
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_EMIT_LOC_STRINGS: "YES"
+    dependencies:
+      - target: BobblyShieldConfig
+      - target: BobblyShieldAction
+      - target: BobblyMonitor
+      - target: BobblyReport
+
+  # ------------------------------------------- Shield configuration (look)
+  BobblyShieldConfig:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BobblyShieldConfig
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: Shared/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app.ShieldConfig
+        PRODUCT_NAME: BobblyShieldConfig
+        INFOPLIST_FILE: BobblyShieldConfig/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BobblyShieldConfig/BobblyShieldConfig.entitlements
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+
+  # ------------------------------------------- Shield action (buttons)
+  BobblyShieldAction:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BobblyShieldAction
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: Shared/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app.ShieldAction
+        PRODUCT_NAME: BobblyShieldAction
+        INFOPLIST_FILE: BobblyShieldAction/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BobblyShieldAction/BobblyShieldAction.entitlements
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+
+  # ------------------------------------------- DeviceActivity monitor (re-lock)
+  BobblyMonitor:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BobblyMonitor
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: Shared/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app.Monitor
+        PRODUCT_NAME: BobblyMonitor
+        INFOPLIST_FILE: BobblyMonitor/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BobblyMonitor/BobblyMonitor.entitlements
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+
+  # ------------------------------------------- DeviceActivity report (ExtensionKit)
+  # DeviceActivityReportExtension is ExtensionKit-based: it is embedded in
+  # Bobbly.app/Extensions/ (not PlugIns/).
+  BobblyReport:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: BobblyReport
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: Shared/Core
+      - path: Shared/Report
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app.Report
+        PRODUCT_NAME: BobblyReport
+        INFOPLIST_FILE: BobblyReport/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BobblyReport/BobblyReport.entitlements
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+
+  # ---------------------------------------------------------------- Tests
+  BobblyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BobblyTests
+    dependencies:
+      - target: Bobbly
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobbly.app.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  Bobbly:
+    build:
+      targets:
+        Bobbly: all
+        BobblyTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BobblyTests
+    archive:
+      config: Release

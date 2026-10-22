@@ -1,0 +1,153 @@
+name: Build Bobbly.ipa
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen and ldid
+        run: brew install xcodegen ldid
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime:
+                  continue
+              for d in devices[runtime]:
+                  if d["name"].startswith("iPhone"):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit(1)
+          ')
+          echo "Using simulator $UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests (simulator)
+        run: |
+          mkdir -p build
+          if ! xcodebuild test \
+              -project Bobbly.xcodeproj \
+              -scheme Bobbly \
+              -destination "id=${{ steps.sim.outputs.udid }}" \
+              -resultBundlePath build/TestResults.xcresult \
+              CODE_SIGNING_ALLOWED=NO \
+              > build/test.log 2>&1; then
+            grep -E "error:|failed|FAILED" build/test.log | head -80 || true
+            tail -60 build/test.log
+            exit 1
+          fi
+          grep -E "Executed|\*\* TEST" build/test.log | tail -5
+
+      - name: Archive (unsigned, device)
+        run: |
+          mkdir -p build
+          if ! xcodebuild archive \
+              -project Bobbly.xcodeproj \
+              -scheme Bobbly \
+              -configuration Release \
+              -destination "generic/platform=iOS" \
+              -archivePath build/Bobbly.xcarchive \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              > build/archive.log 2>&1; then
+            grep -E "error:" build/archive.log | head -80 || true
+            tail -60 build/archive.log
+            exit 1
+          fi
+          grep -E "\*\* ARCHIVE" build/archive.log | tail -2
+
+      - name: Embed entitlements with ldid and package IPA
+        run: |
+          set -euo pipefail
+          APP="build/Bobbly.xcarchive/Products/Applications/Bobbly.app"
+          test -d "$APP"
+          # Inner bundles first, then the app. Each target's executable == target name.
+          for appex in "$APP"/PlugIns/*.appex "$APP"/Extensions/*.appex; do
+            [ -d "$appex" ] || continue
+            name="$(basename "$appex" .appex)"
+            echo "ldid $name"
+            ldid -S"$name/$name.entitlements" "$appex/$name"
+          done
+          ldid -SBobbly/App/Bobbly.entitlements "$APP/Bobbly"
+          rm -rf build/ipa && mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          (cd build/ipa && zip -qry ../../Bobbly.ipa Payload)
+          ls -lh Bobbly.ipa
+
+      - name: Verify IPA contents
+        run: |
+          set -euo pipefail
+          rm -rf build/verify && mkdir -p build/verify
+          unzip -q Bobbly.ipa -d build/verify
+          APP=build/verify/Payload/Bobbly.app
+          for ext in BobblyShieldConfig BobblyShieldAction BobblyMonitor; do
+            test -d "$APP/PlugIns/$ext.appex" || { echo "missing PlugIns/$ext.appex"; exit 1; }
+          done
+          REPORT=""
+          for dir in Extensions PlugIns; do
+            [ -d "$APP/$dir/BobblyReport.appex" ] && REPORT="$APP/$dir/BobblyReport.appex"
+          done
+          test -n "$REPORT" || { echo "missing BobblyReport.appex"; exit 1; }
+          SCHEME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$APP/Info.plist")
+          test "$SCHEME" = "bobbly" || { echo "URL scheme is '$SCHEME'"; exit 1; }
+          for bin in "$APP/Bobbly" \
+                     "$APP/PlugIns/BobblyShieldConfig.appex/BobblyShieldConfig" \
+                     "$APP/PlugIns/BobblyShieldAction.appex/BobblyShieldAction" \
+                     "$APP/PlugIns/BobblyMonitor.appex/BobblyMonitor" \
+                     "$REPORT/BobblyReport"; do
+            ENT=$(codesign -d --entitlements - "$bin" 2>&1 || true)
+            echo "$ENT" | grep -q "com.apple.developer.family-controls" || { echo "family-controls missing on $bin"; exit 1; }
+            echo "$ENT" | grep -q "group.com.bobbly.shared" || { echo "App Group missing on $bin"; exit 1; }
+            echo "ok: $(basename "$bin")"
+          done
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bobbly-ipa
+          path: Bobbly.ipa
+          if-no-files-found: error
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build/*.log
+            build/TestResults.xcresult
+          if-no-files-found: ignore
+
+      - name: GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Bobbly.ipa

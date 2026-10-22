@@ -1,0 +1,17 @@
+# XcodeGen output (regenerated from project.yml)
+*.xcodeproj/
+*.xcworkspace/
+
+# Build products
+build/
+DerivedData/
+Payload/
+*.ipa
+*.xcarchive
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
