@@ -175,6 +175,10 @@ final class FamilyControlsEngine: BlockingEngine {
             try await revokeAuthorization()
             revoked = true
             shared.invalidateTokens(now: now)
+            // FamilyControls is no longer set up: reattaching is a fresh setup
+            // (a failed request then falls back visibly instead of being treated
+            // as an "unclear" re-request of a working setup).
+            shared.engineKind = nil
         } catch {
             errors.append("Revoking Screen Time access failed: \(error.localizedDescription)")
         }

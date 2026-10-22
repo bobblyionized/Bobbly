@@ -108,7 +108,8 @@ final class HomeViewModel {
     /// Settings): the saved app picks are void and must be chosen again.
     /// Show a "Pick your apps again" call to action (→ `perform(.editBlockedApps)`).
     var needsAppRepick: Bool {
-        env.engines.state == .familyControls && !env.engines.status.hasAnythingBlocked && env.shared.tokensRevokedAt != nil
+        env.engines.state == .familyControls && env.engines.familyControls.isAuthorized
+            && !env.engines.status.hasAnythingBlocked && env.shared.tokensRevokedAt != nil
     }
 
     /// FamilyControls only: embed `DeviceActivityReport(todayReportContext, filter: todayReportFilter)`.

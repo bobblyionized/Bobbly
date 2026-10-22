@@ -613,3 +613,12 @@ What remains can only be confirmed on a real device or by the first CI run.
     the next foreground. Saved picks are cleared only on a definite denial
     (status `.denied`, or the user cancelling the prompt). No view change
     needed; `lastAuthorizationError` appears in diagnostics.
+
+- **2026-10-22 (final review): behavior only, no API changes.**
+  - `SettingsViewModel.canRetryScreenTime` is also true while FamilyControls
+    is selected but not authorized.
+  - `HomeViewModel.needsAppRepick` now also requires authorization, so the
+    "Pick your apps again" prompt never opens a picker that can't be used.
+  - If access is revoked in iOS Settings and then re-approved through the
+    prompt, the saved picks are cleared, Home shows the re-pick prompt, and
+    whitelists show `needsRepick`.

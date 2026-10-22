@@ -59,8 +59,13 @@ final class SettingsViewModel {
         }
     }
 
-    /// Show "Retry Screen Time access" when not on FamilyControls.
-    var canRetryScreenTime: Bool { env.engines.state != .familyControls }
+    /// Show "Retry Screen Time access" when not on FamilyControls — or when the
+    /// engine is kept on FamilyControls without current authorization (unclear
+    /// re-request, retrying in the background).
+    var canRetryScreenTime: Bool {
+        AuthorizationRules.canRetryScreenTime(state: env.engines.state,
+                                              isAuthorized: env.engines.familyControls.isAuthorized)
+    }
 
     var appVersion: String {
         let info = Bundle.main.infoDictionary

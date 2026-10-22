@@ -29,7 +29,29 @@ enum AuthorizationRequestResult: Equatable, Sendable {
     }
 }
 
+/// One authorization request plus the evidence of whether the system prompt
+/// was actually shown (vs. a silent no-op for an app that is still authorized).
+struct AuthorizationAttempt: Equatable, Sendable {
+    var result: AuthorizationRequestResult
+    /// Seconds the request took.
+    var duration: TimeInterval
+    /// The app resigned active while the request was in flight — the system
+    /// alert / Face ID sheet covering the app does exactly that.
+    var resignedActive: Bool
+}
+
 enum AuthorizationRules {
+    /// A silent re-request returns in milliseconds; a real prompt needs a human.
+    static let interactiveMinimumDuration: TimeInterval = 1.0
+
+    /// `true` when the request really showed the Screen Time prompt. Both
+    /// signals are required, so a slow silent call or an unrelated
+    /// interruption (Control Center) alone never counts as a re-approval —
+    /// a false positive here would wipe the user's block list.
+    static func wasInteractive(_ attempt: AuthorizationAttempt) -> Bool {
+        attempt.resignedActive && attempt.duration >= interactiveMinimumDuration
+    }
+
     /// A plain mirror of `AuthorizationStatus` (unknown future cases count as
     /// `.notDetermined`, i.e. never as a definite revocation).
     enum Status: Equatable, Sendable {
@@ -62,31 +84,40 @@ enum AuthorizationRules {
     }
 
     enum SilentRecovery: Equatable, Sendable {
-        /// Authorized → (re)activate FamilyControls.
+        /// Still authorized (silent no-op) → (re)activate FamilyControls.
         case activate
+        /// Access had really been revoked and the user just re-approved it via
+        /// the prompt: Apple voided every saved token on revoke → clear the
+        /// saved picks (user re-picks), then activate.
+        case reapproved
         /// Definitely revoked → void tokens, fall back to Shortcuts.
         case revoked
         /// Unclear → keep FamilyControls and its shields untouched; retry later.
         case keepAndRetry
     }
 
-    static func afterSilentReRequest(_ result: AuthorizationRequestResult, statusAfter: Status) -> SilentRecovery {
-        switch result {
+    static func afterSilentReRequest(_ attempt: AuthorizationAttempt, statusAfter: Status) -> SilentRecovery {
+        let approved: Bool
+        switch attempt.result {
         case .approved:
-            return .activate
+            approved = true
         case .userDenied:
             return .revoked
         case .failed:
             switch statusAfter {
-            case .approved: return .activate
+            case .approved: approved = true
             case .denied: return .revoked
             case .notDetermined: return .keepAndRetry
             }
         }
+        return approved && wasInteractive(attempt) ? .reapproved : .activate
     }
 
     enum UserRequestOutcome: Equatable, Sendable {
         case activate
+        /// A previously working setup had lost access and was re-approved
+        /// through the prompt: clear the voided picks, then activate.
+        case activateWithFreshPicks
         /// Switch to Shortcuts; `invalidateTokens` when access was definitely
         /// withdrawn from a previously working FamilyControls setup.
         case fallback(invalidateTokens: Bool)
@@ -95,10 +126,16 @@ enum AuthorizationRules {
         case keepFamilyControls
     }
 
+    /// Settings shows "Retry Screen Time access" unless FamilyControls is both
+    /// selected and actually authorized.
+    static func canRetryScreenTime(state: EngineSelectionState, isAuthorized: Bool) -> Bool {
+        state != .familyControls || !isAuthorized
+    }
+
     /// After a user-initiated request (tutorial, Settings › Retry, reattach).
-    static func afterUserRequest(_ result: AuthorizationRequestResult, wasFamily: Bool) -> UserRequestOutcome {
-        switch result {
-        case .approved: return .activate
+    static func afterUserRequest(_ attempt: AuthorizationAttempt, wasFamily: Bool) -> UserRequestOutcome {
+        switch attempt.result {
+        case .approved: return wasFamily && wasInteractive(attempt) ? .activateWithFreshPicks : .activate
         case .userDenied: return .fallback(invalidateTokens: wasFamily)
         case .failed: return wasFamily ? .keepFamilyControls : .fallback(invalidateTokens: false)
         }

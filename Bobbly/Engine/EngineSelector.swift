@@ -13,6 +13,7 @@
 import Foundation
 import Observation
 import FamilyControls
+import UIKit
 
 enum EngineSelectionState: Equatable {
     /// Screen Time access has not been requested yet.
@@ -68,10 +69,23 @@ final class EngineSelector {
     let shortcuts: ShortcutsEngine
     let shared: SharedStore
 
+    /// Set when the app resigns active while an authorization request is in
+    /// flight — the evidence that the system prompt was really shown.
+    @ObservationIgnored private var resignedActiveDuringRequest = false
+    @ObservationIgnored private var resignObserver: NSObjectProtocol?
+
     init(shared: SharedStore = .shared) {
         self.shared = shared
         self.familyControls = FamilyControlsEngine(shared: shared)
         self.shortcuts = ShortcutsEngine(shared: shared)
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.requestTask != nil else { return }
+                self.resignedActiveDuringRequest = true
+            }
+        }
     }
 
     /// The engine currently enforcing blocks.
@@ -88,7 +102,7 @@ final class EngineSelector {
     /// scene activation and intent notifications can all ask at once at cold
     /// launch — exactly when a transient `.notDetermined` read happens).
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
-    @ObservationIgnored private var requestTask: Task<AuthorizationRequestResult, Never>?
+    @ObservationIgnored private var requestTask: Task<AuthorizationAttempt, Never>?
 
     /// Call at launch and whenever the app becomes active. Concurrent calls
     /// share one run.
@@ -120,10 +134,17 @@ final class EngineSelector {
             // `.notDetermined` can be a stale read right after launch (developer
             // forum reports). Re-requesting is silent while still authorized
             // (Apple docs) and only prompts if access really was revoked.
-            let result = await performAuthorizationRequest()
+            let attempt = await performAuthorizationRequest()
+            let result = attempt.result
             status = AuthorizationRules.Status(familyControls.authorizationStatus)
-            switch AuthorizationRules.afterSilentReRequest(result, statusAfter: status) {
+            switch AuthorizationRules.afterSilentReRequest(attempt, statusAfter: status) {
             case .activate:
+                select(.familyControls)
+            case .reapproved:
+                // The prompt really appeared: access had been revoked in iOS
+                // Settings and was just granted again. Apple voided every saved
+                // token on revoke, so clear them (Home asks to re-pick) and activate.
+                handleRevocation()
                 select(.familyControls)
             case .revoked:
                 handleRevocation()
@@ -170,9 +191,15 @@ final class EngineSelector {
     func requestFamilyControls() async -> Bool {
         prefersShortcuts = false
         let wasFamily = shared.engineKind == .familyControls
-        let result = await performAuthorizationRequest()
-        switch AuthorizationRules.afterUserRequest(result, wasFamily: wasFamily) {
+        let attempt = await performAuthorizationRequest()
+        let result = attempt.result
+        switch AuthorizationRules.afterUserRequest(attempt, wasFamily: wasFamily) {
         case .activate:
+            if shared.isDetached { shared.isDetached = false }
+            select(.familyControls)
+            return true
+        case .activateWithFreshPicks:
+            handleRevocation()
             if shared.isDetached { shared.isDetached = false }
             select(.familyControls)
             return true
@@ -188,25 +215,33 @@ final class EngineSelector {
         }
     }
 
-    /// Runs (or joins) the single in-flight authorization request.
-    private func performAuthorizationRequest() async -> AuthorizationRequestResult {
+    /// Runs (or joins) the single in-flight authorization request and records
+    /// whether the system prompt was really shown (see `AuthorizationAttempt`).
+    private func performAuthorizationRequest() async -> AuthorizationAttempt {
         if let running = requestTask {
             return await running.value
         }
         isRequestingAuthorization = true
+        resignedActiveDuringRequest = false
         let engine = familyControls
-        let task = Task { @MainActor () -> AuthorizationRequestResult in
+        let task = Task { @MainActor [weak self] () -> AuthorizationAttempt in
+            let start = Date()
+            let result: AuthorizationRequestResult
             do {
                 try await engine.requestAuthorization()
-                return .approved
+                result = .approved
             } catch {
-                return AuthorizationRequestResult(error: error)
+                result = AuthorizationRequestResult(error: error)
             }
+            return AuthorizationAttempt(result: result,
+                                        duration: Date().timeIntervalSince(start),
+                                        resignedActive: self?.resignedActiveDuringRequest ?? false)
         }
         requestTask = task
-        let result = await task.value
+        let attempt = await task.value
         requestTask = nil
         isRequestingAuthorization = false
+        let result = attempt.result
         switch result {
         case .approved:
             lastAuthorizationError = nil
@@ -217,7 +252,7 @@ final class EngineSelector {
             lastAuthorizationError = detail
             shared.appendLog("Screen Time authorization failed: \(detail)")
         }
-        return result
+        return attempt
     }
 
     /// Definite revocation: every saved token is void. Clear them so nothing
