@@ -46,16 +46,16 @@ enum MonitorLogic {
             return .unlocksEnded(due)
         }
 
-        if activity == .bobblyEmergency {
+        if activity.isBobblyEmergencyTrigger {
             guard let until = shared.emergencyUntil, until <= horizon else { return .none }
             shared.emergencyUntil = nil
             return .emergencyEnded
         }
 
-        if activity == .bobblyStudy {
+        if activity.isBobblyStudyTrigger {
             guard let study = shared.activeStudy, let end = study.endsAt, end <= horizon else { return .none }
+            shared.recordStudyEnd(study, at: end, reason: .completed)
             shared.activeStudy = nil
-            shared.lastStudyEndedAt = end
             return .studyEnded(whitelistName: study.whitelistName)
         }
 

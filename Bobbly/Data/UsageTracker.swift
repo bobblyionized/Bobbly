@@ -52,6 +52,22 @@ final class UsageTracker {
         save()
     }
 
+    /// One blocked attempt = one interruption: `CheckAccessIntent` logs the
+    /// attempt and its shortcut then opens the Gate, which must not count it
+    /// again. Logs only if no interruption for the same app exists within `window`.
+    /// - Returns: `true` if it was logged.
+    @discardableResult
+    func logInterruptionIfNew(appName: String, source: InterruptionSource,
+                              window: TimeInterval = 120, at date: Date = Date()) -> Bool {
+        let since = date.addingTimeInterval(-window)
+        let descriptor = FetchDescriptor<InterruptionEvent>(predicate: #Predicate { $0.date >= since })
+        let key = AppKey.normalize(appName)
+        let recent = (try? context.fetch(descriptor)) ?? []
+        if recent.contains(where: { AppKey.normalize($0.appName) == key && $0.date <= date }) { return false }
+        logInterruption(appName: appName, source: source, at: date)
+        return true
+    }
+
     @discardableResult
     func logUnlock(appName: String, appKey: String?, reason: String, category: String, minutes: Int,
                    granted: Bool, isEmergency: Bool = false, costLife: Bool = false, at date: Date = Date()) -> UnlockEvent {

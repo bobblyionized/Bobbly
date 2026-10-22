@@ -109,8 +109,11 @@ final class EmergencyViewModel {
         }
     }
 
-    /// Finger lifted early: cancels the hold.
+    /// Finger lifted early: cancels the hold. No-op once the hold completed
+    /// (`holdingAction` is cleared before the action runs), so lifting the
+    /// finger can never cancel an in-flight unblock/detach.
     func cancelHold() {
+        guard holdingAction != nil else { return }
         holdTask?.cancel()
         holdTask = nil
         holdingAction = nil
@@ -158,7 +161,12 @@ final class EmergencyViewModel {
 
     private func performDetach() async {
         detachPhase = .working
+        // Close a running study session first (ended early, no bonus/penalty)
+        // so it isn't later mistaken for a completed one.
+        if env.shared.activeStudy != nil { env.study.stopSessionWithoutChat() }
         let report = await env.engines.detach()
+        // A successful revoke voided every saved token: flag whitelists now.
+        env.study.syncWithEngine()
         detachPhase = .finished(report)
         if let firstError = report.errors.first { errorMessage = firstError }
         env.refreshAll()

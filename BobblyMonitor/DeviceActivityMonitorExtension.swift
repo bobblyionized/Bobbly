@@ -31,6 +31,9 @@ final class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     }
 
     private func handleTrigger(_ activity: DeviceActivityName, phase: String) {
+        // If the signer dropped/renamed the App Group this process sees an
+        // empty private store; acting on it could unshield everything.
+        guard AppGroup.isContainerAvailable else { return }
         let now = Date()
         let outcome = MonitorLogic.handle(activity, shared: shared, now: now)
         switch outcome {
@@ -46,7 +49,7 @@ final class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         case .none:
             break
         }
-        let summary = ShieldPolicy.reconcile(shared: shared, now: now)
+        let summary = ShieldPolicy.reconcile(shared: shared, now: now, requireAppGroup: true)
         shared.appendLog("monitor \(phase) \(activity.rawValue.replacingOccurrences(of: "com.bobbly.activity.", with: "")): \(outcome.logDescription); \(summary)")
     }
 }

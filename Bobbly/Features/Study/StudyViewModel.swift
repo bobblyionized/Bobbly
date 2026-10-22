@@ -44,6 +44,9 @@ struct WhitelistSummary: Identifiable, Hashable {
     /// Shortcuts engine: allowed tracked app names.
     var allowedAppNames: [String]
     var updatedAt: Date
+    /// Screen Time access was revoked since this whitelist's apps were picked:
+    /// its app picks are void — show "Pick apps again" (→ `edit(id)`).
+    var needsRepick: Bool = false
 }
 
 /// Editable copy of a whitelist (the editor sheet binds to `draft`).
@@ -132,7 +135,8 @@ final class StudyViewModel {
                                     categoryCount: selection.categoryTokens.count,
                                     webDomainCount: selection.webDomainTokens.count,
                                     allowedAppNames: list.allowedAppKeys.map { namesByKey[$0] ?? $0 },
-                                    updatedAt: list.updatedAt)
+                                    updatedAt: list.updatedAt,
+                                    needsRepick: list.needsRepick)
         }
         trackedApps = tracked.map(TrackedAppRow.init)
         if selectedWhitelistID == nil || !whitelists.contains(where: { $0.id == selectedWhitelistID }) {
@@ -143,25 +147,73 @@ final class StudyViewModel {
         }
     }
 
-    /// Closes SwiftData sessions that the monitor already ended (timer ran out
-    /// while Bobbly was closed) and credits the companion.
+    /// Brings SwiftData in line with the engines: closes sessions that ended
+    /// elsewhere (timer ran out while Bobbly was closed, Siri detach) and flags
+    /// whitelists whose app picks were voided by a Screen Time revocation.
     func syncWithEngine(now: Date = Date()) {
-        // A timed session that ran out (Shortcuts engine keeps it in the store
-        // until now; FamilyControls' monitor clears it) is finished.
+        invalidateWhitelistsIfTokensRevoked()
+
+        // A timed session that ran out (the Shortcuts engine keeps it in the
+        // store; FamilyControls' monitor clears it) is finished.
         if let study = env.shared.activeStudy, !study.isActive(at: now) {
+            env.shared.recordStudyEnd(study, at: study.endsAt ?? now, reason: .completed)
             env.shared.activeStudy = nil
-            env.shared.lastStudyEndedAt = study.endsAt ?? now
         }
         let running = (try? env.context.fetch(FetchDescriptor<StudySession>(predicate: #Predicate { $0.endedAt == nil }))) ?? []
         let activeID = env.shared.activeStudy?.sessionID
         for session in running where session.id != activeID {
-            let end = min(now, session.plannedEnd ?? env.shared.lastStudyEndedAt ?? now)
-            session.endedAt = end
-            session.endedEarly = false
-            env.companion.recordStudyFinished(minutes: session.focusMinutes(at: end), endedEarly: false, now: now)
+            let resolution = Self.resolveEnd(of: session.startedAt, plannedEnd: session.plannedEnd,
+                                             record: env.shared.studyEndRecord(for: session.id), now: now)
+            session.endedAt = resolution.endedAt
+            session.endedEarly = !resolution.completed
+            if resolution.completed {
+                env.companion.recordStudyFinished(minutes: session.focusMinutes(at: resolution.endedAt), endedEarly: false, now: now)
+            }
+            // Detached / unknown endings: no bonus and no penalty (emergencies are free).
         }
         try? env.context.save()
         refresh()
+    }
+
+    /// Pure: when/how a session that is no longer running ended.
+    /// Never returns an end before `start` or after `now`.
+    static func resolveEnd(of start: Date, plannedEnd: Date?, record: StudyEndRecord?, now: Date)
+        -> (endedAt: Date, completed: Bool) {
+        let rawEnd: Date
+        let completed: Bool
+        if let record {
+            rawEnd = record.endedAt
+            completed = record.reason == .completed
+        } else if let plannedEnd, plannedEnd <= now {
+            rawEnd = plannedEnd
+            completed = true
+        } else {
+            rawEnd = now
+            completed = false
+        }
+        return (max(start, min(rawEnd, now)), completed)
+    }
+
+    private static let tokensHandledKey = "bobbly.study.tokensRevocationHandledAt"
+
+    /// After a revocation every saved whitelist token is void: clear the picks
+    /// and flag the whitelist so the UI asks the user to pick apps again.
+    private func invalidateWhitelistsIfTokensRevoked() {
+        guard let revokedAt = env.shared.tokensRevokedAt else { return }
+        let handled = UserDefaults.standard.object(forKey: Self.tokensHandledKey) as? Date
+        guard handled.map({ $0 < revokedAt }) ?? true else { return }
+        let lists = (try? env.context.fetch(FetchDescriptor<Whitelist>())) ?? []
+        for list in lists where list.selectionData != nil && list.updatedAt <= revokedAt {
+            let selection = list.selection
+            let hadTokens = !selection.applicationTokens.isEmpty || !selection.categoryTokens.isEmpty
+                || !selection.webDomainTokens.isEmpty
+            if hadTokens {
+                list.selection = FamilyActivitySelection(includeEntireCategory: true)
+                list.needsRepick = true
+            }
+        }
+        try? env.context.save()
+        UserDefaults.standard.set(revokedAt, forKey: Self.tokensHandledKey)
     }
 
     // MARK: Whitelist editing
@@ -194,6 +246,9 @@ final class StudyViewModel {
             existing.name = name
             existing.selection = draft.selection
             existing.allowedAppKeys = Array(draft.allowedAppKeys).sorted()
+            let picked = !draft.selection.applicationTokens.isEmpty || !draft.selection.categoryTokens.isEmpty
+                || !draft.selection.webDomainTokens.isEmpty
+            if picked { existing.needsRepick = false }
         } else {
             env.context.insert(Whitelist(name: name, selection: draft.selection, allowedAppKeys: Array(draft.allowedAppKeys).sorted()))
         }
@@ -224,6 +279,12 @@ final class StudyViewModel {
             errorMessage = "Pick a whitelist first."
             return
         }
+        if engineKind == .familyControls && list.needsRepick {
+            // Its saved picks were voided by a Screen Time revocation; starting
+            // now would block everything with no exceptions.
+            errorMessage = "Screen Time access was reset. Pick the apps for \(list.name) again first."
+            return
+        }
         let endsAt = selectedDuration.minutes.map { now.addingTimeInterval(TimeInterval($0 * 60)) }
         let session = StudySession(whitelistID: list.id, whitelistName: list.name, startedAt: now, plannedEnd: endsAt)
         env.context.insert(session)
@@ -251,27 +312,32 @@ final class StudyViewModel {
         env.openChat(ChatTarget.studySession(named: activeSession.whitelistName))
     }
 
-    /// Called by ChatViewModel when the chat approves ending the session.
+    /// Called by ChatViewModel when the chat approves ending the session
+    /// (ended early: focus minutes count, small mood cost).
     func endSessionEarly(reason: String, now: Date = Date()) {
-        finishRunningSession(endedEarly: true, now: now)
+        finishRunningSession(reason: .endedEarly, now: now)
     }
 
-    /// Ends a session immediately without the chat (emergency paths only).
+    /// Ends a session immediately without the chat — emergency detach only.
+    /// Recorded as ended early with no bonus and no penalty (emergencies are free).
     func stopSessionWithoutChat(now: Date = Date()) {
-        finishRunningSession(endedEarly: true, now: now)
+        finishRunningSession(reason: .detached, now: now)
     }
 
     // MARK: Helpers
 
-    private func finishRunningSession(endedEarly: Bool, now: Date) {
-        let activeID = env.shared.activeStudy?.sessionID
+    private func finishRunningSession(reason: StudyEndRecord.Reason, now: Date) {
+        let study = env.shared.activeStudy
+        if let study { env.shared.recordStudyEnd(study, at: now, reason: reason) }
         env.engines.endStudy()
-        if let activeID {
+        if let activeID = study?.sessionID {
             let descriptor = FetchDescriptor<StudySession>(predicate: #Predicate { $0.id == activeID })
             if let session = try? env.context.fetch(descriptor).first, session.endedAt == nil {
-                session.endedAt = now
-                session.endedEarly = endedEarly
-                env.companion.recordStudyFinished(minutes: session.focusMinutes(at: now), endedEarly: endedEarly, now: now)
+                session.endedAt = max(session.startedAt, now)
+                session.endedEarly = true
+                if reason == .endedEarly {
+                    env.companion.recordStudyFinished(minutes: session.focusMinutes(at: now), endedEarly: true, now: now)
+                }
                 try? env.context.save()
             }
         }

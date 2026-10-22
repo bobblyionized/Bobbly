@@ -65,6 +65,14 @@ enum BobblyNotifications {
         post(id: ID.studyEnded, content: content, after: date.map { $0.timeIntervalSince(now) })
     }
 
+    /// Removes every pending and delivered Bobbly notification (detach).
+    /// Every notification this app schedules is a `com.bobbly.notification.*` one.
+    static func cancelAll() {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+    }
+
     static func cancel(ids: [String]) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ids)

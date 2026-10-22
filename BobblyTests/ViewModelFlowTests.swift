@@ -123,6 +123,64 @@ final class ViewModelFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testOnAppearDoesNotWipeTargetedChat() async {
+        let env = makeEnvironment()
+        env.chat.start(target: ChatTarget(subject: .appName("Reddit"), displayName: "Reddit", origin: .gate))
+        env.chat.onAppear() // first lines are still being presented asynchronously
+        XCTAssertEqual(env.chat.target?.displayName, "Reddit")
+        await waitUntil { !env.chat.quickReplies.isEmpty }
+        XCTAssertEqual(env.chat.target?.displayName, "Reddit")
+        XCTAssertEqual(env.chat.phase, .askingReason)
+    }
+
+    @MainActor
+    func testGivingUpDuringCooldownCancelsItAndKeepsChatUsable() async {
+        let env = makeEnvironment()
+        env.chat.start(target: ChatTarget(subject: .appName("TikTok"), displayName: "TikTok", origin: .chatTab))
+        await waitUntil { !env.chat.quickReplies.isEmpty }
+        env.chat.draft = "bored"
+        env.chat.send()
+        await waitUntil { env.chat.quickReplies.contains { $0.kind == .unlockAnyway } }
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .unlockAnyway }!)
+        await waitUntil { env.chat.quickReplies.contains { $0.kind == .waitCooldown } }
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .waitCooldown }!)
+        await waitUntil { env.chat.cooldown != nil }
+        XCTAssertNotNil(env.chat.cooldown)
+
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .giveUp }!)
+        await waitUntil { env.chat.outcome != nil }
+        XCTAssertEqual(env.chat.outcome, .declined)
+        XCTAssertNil(env.chat.cooldown)
+        XCTAssertTrue(env.chat.quickReplies.contains { $0.kind == .startOver })
+    }
+
+    @MainActor
+    func testSiriStyleDetachClosesStudyWithoutBonus() async {
+        let env = makeEnvironment()
+        let study = env.study!
+        study.newWhitelist()
+        study.draft?.name = "Deep work"
+        XCTAssertTrue(study.saveDraft())
+        study.selectedDuration = .untilStopped
+        study.startSession()
+        let moodBefore = env.companion.snapshot.mood
+
+        _ = await env.engines.detach()   // like the Siri intent: no stopSessionWithoutChat first
+        study.syncWithEngine()
+
+        let sessions = (try? env.context.fetch(FetchDescriptor<StudySession>())) ?? []
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions.first?.endedEarly, true)
+        if let session = sessions.first, let end = session.endedAt {
+            XCTAssertGreaterThanOrEqual(end, session.startedAt)
+        } else {
+            XCTFail("session not closed")
+        }
+        XCTAssertEqual(env.companion.snapshot.mood, moodBefore)
+        XCTAssertTrue(env.engines.decision(forAppNamed: "Anything").isAllowed)
+    }
+
+    @MainActor
     func testGateLogsOneInterruption() {
         let env = makeEnvironment()
         env.shared.blockedAppKeys = ["Reddit"]
@@ -132,6 +190,35 @@ final class ViewModelFlowTests: XCTestCase {
         XCTAssertFalse(gate.isAllowedNow)
         XCTAssertEqual(env.tracker.interruptionCount(in: UsageAggregator.lastDays(1)), 1)
         XCTAssertEqual(gate.headline, "Reddit is blocked")
+    }
+
+    @MainActor
+    func testCheckAccessThenGateCountsOnce() {
+        let env = makeEnvironment()
+        env.shared.blockedAppKeys = ["Reddit"]
+        // What CheckAccessIntent does on a denied check…
+        env.tracker.logInterruption(appName: "reddit", source: .checkAccess)
+        // …then its shortcut opens the Gate for the same attempt.
+        let gate = env.makeGateViewModel(target: ChatTarget(subject: .appName("Reddit"), displayName: "Reddit", origin: .gate))
+        gate.onAppear()
+        XCTAssertEqual(env.tracker.interruptionCount(in: UsageAggregator.lastDays(1)), 1)
+    }
+
+    @MainActor
+    func testShieldInterruptionsAreIngestedForEveryDay() {
+        let env = makeEnvironment()
+        let now = Date()
+        let yesterday = now.addingTimeInterval(-86_400)
+        env.shared.incrementInterruptions(now: yesterday)
+        env.shared.incrementInterruptions(now: yesterday)
+        env.shared.incrementInterruptions(now: now)
+        XCTAssertEqual(env.pendingShieldInterruptionsToday(now: now), 1)
+
+        env.ingestShieldInterruptions(now: now)
+        env.ingestShieldInterruptions(now: now) // idempotent
+        XCTAssertEqual(env.pendingShieldInterruptionsToday(now: now), 0)
+        XCTAssertEqual(env.tracker.interruptionCount(in: UsageAggregator.lastDays(2, now: now)), 3)
+        XCTAssertEqual(env.tracker.interruptionCount(in: UsageAggregator.lastDays(1, now: now)), 1)
     }
 
     @MainActor
@@ -146,13 +233,16 @@ final class ViewModelFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testDeepLinkPresentsGate() {
+    func testDeepLinkPresentsGate() async {
         let env = makeEnvironment()
         env.handle(url: URL(string: "bobbly://emergency")!)
         XCTAssertEqual(env.router.sheet, .emergency)
 
+        // Sheet up → it is dismissed first, the gate cover follows after the hand-off delay.
         env.handle(url: URL(string: "bobbly://gate?app=Instagram")!)
         XCTAssertNil(env.router.sheet)
+        XCTAssertNil(env.router.cover)
+        await waitUntil { env.router.cover != nil }
         guard case .gate(let target) = env.router.cover else { return XCTFail("gate not presented") }
         XCTAssertEqual(target.displayName, "Instagram")
         XCTAssertEqual(target.reopenURL, URL(string: "instagram://"))

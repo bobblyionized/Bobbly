@@ -112,16 +112,9 @@ final class AppEnvironment {
 
     /// Presents a sheet, first dismissing a full-screen cover if one is up
     /// (SwiftUI can't present a root sheet while a cover is showing).
+    /// `router.present(_:)` now does this sequencing itself; kept for callers.
     func presentSheet(_ route: SheetRoute) {
-        guard router.cover != nil else {
-            router.present(route)
-            return
-        }
-        router.dismissCover()
-        Task { @MainActor [router] in
-            try? await Task.sleep(for: .milliseconds(450))
-            router.present(route)
-        }
+        router.present(route)
     }
 
     /// Credits protected time since the last credit to Bobbly's mood.
@@ -168,7 +161,13 @@ final class AppEnvironment {
         sharedStateObserver = NotificationCenter.default.addObserver(
             forName: .bobblySharedStateChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.refreshAll() }
+            Task { @MainActor in
+                guard let self else { return }
+                // An intent may have detached Bobbly or changed timed state.
+                await self.engines.bootstrap(requestIfNeeded: false)
+                self.study.syncWithEngine()
+                self.refreshAll()
+            }
         }
     }
 
@@ -225,22 +224,29 @@ final class AppEnvironment {
 
     // MARK: - Shield counters → history
 
-    private static let ingestedKey = "bobbly.app.ingestedShieldInterruptions"
-    private static let ingestedDayKey = "bobbly.app.ingestedShieldInterruptionsDay"
+    /// Per-day counts already copied into SwiftData (`SharedStore.dayKey` → count).
+    private var importedShieldInterruptions: [String: Int] {
+        get { shared.importedInterruptionsByDay }
+        set { shared.importedInterruptionsByDay = newValue }
+    }
 
-    /// Moves new shield interruptions (counted by the shield-action extension in
-    /// SharedStore) into SwiftData so Stats has history.
-    private func ingestShieldInterruptions(now: Date = Date()) {
-        let defaults = UserDefaults.standard
-        let today = Calendar.current.startOfDay(for: now).timeIntervalSince1970
-        if defaults.double(forKey: Self.ingestedDayKey) != today {
-            defaults.set(today, forKey: Self.ingestedDayKey)
-            defaults.set(0, forKey: Self.ingestedKey)
+    /// Moves new shield interruptions (counted per day by the shield-action
+    /// extension in SharedStore) into SwiftData so Stats has history — for
+    /// every day, including days Bobbly wasn't opened.
+    func ingestShieldInterruptions(now: Date = Date()) {
+        let sharedCounts = shared.interruptionsByDay
+        var imported = importedShieldInterruptions
+        for item in InterruptionIngest.pending(shared: sharedCounts, imported: imported) {
+            tracker.logInterruption(appName: "Shielded apps", source: .shield, count: item.delta,
+                                    at: InterruptionIngest.date(forDayKey: item.dayKey, now: now))
+            imported[item.dayKey, default: 0] += item.delta
         }
-        let total = shared.interruptionsToday(now: now)
-        let already = defaults.integer(forKey: Self.ingestedKey)
-        guard total > already else { return }
-        tracker.logInterruption(appName: "Shielded apps", source: .shield, count: total - already, at: now)
-        defaults.set(total, forKey: Self.ingestedKey)
+        importedShieldInterruptions = imported.filter { sharedCounts[$0.key] != nil }
+    }
+
+    /// Shield interruptions today that aren't in SwiftData yet.
+    func pendingShieldInterruptionsToday(now: Date = Date()) -> Int {
+        let key = SharedStore.dayKey(now)
+        return max(0, shared.interruptionsToday(now: now) - (importedShieldInterruptions[key] ?? 0))
     }
 }

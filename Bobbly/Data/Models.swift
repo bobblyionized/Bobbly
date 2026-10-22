@@ -55,6 +55,9 @@ final class Whitelist {
     var allowedAppKeys: [String]
     var createdAt: Date
     var updatedAt: Date
+    /// Screen Time access was revoked after the apps were picked: the saved
+    /// tokens were cleared and the user must pick the apps again.
+    var needsRepick: Bool = false
 
     @Relationship(deleteRule: .nullify, inverse: \StudySession.whitelist)
     var sessions: [StudySession] = []

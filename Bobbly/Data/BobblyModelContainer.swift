@@ -24,12 +24,17 @@ enum BobblyModelContainer {
     /// Never crashes: falls back to an in-memory store if the on-disk store
     /// cannot be opened (diagnostics will show `isUsingFallbackStore`).
     static func make(inMemory: Bool) -> ModelContainer {
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
+        // `.automatic` would put the store in the App Group container when the
+        // entitlement is present (and move it when a re-signer drops it), and
+        // could try CloudKit. Pin it to the app's own container, local only.
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory,
+                                        groupContainer: .none, cloudKitDatabase: .none)
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
             fallbackError = String(describing: error)
-            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true,
+                                            groupContainer: .none, cloudKitDatabase: .none)
             // An in-memory store with a valid schema cannot fail to open.
             return try! ModelContainer(for: schema, configurations: [memory])
         }

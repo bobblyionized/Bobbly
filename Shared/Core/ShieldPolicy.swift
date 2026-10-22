@@ -12,40 +12,68 @@ import ManagedSettings
 
 enum ShieldPolicy {
 
+    /// What `reconcile` decides to do, before touching ManagedSettings (unit-tested).
+    enum Action: Equatable {
+        /// State is unreadable (no engine recorded, or the App Group is missing
+        /// in an extension): leave every shield exactly as it is.
+        case skip(reason: String)
+        /// Remove every Bobbly shield.
+        case clear(reason: String)
+        /// Apply the block list (and the study whitelist session, if running).
+        case apply
+    }
+
+    /// Pure decision. Clearing only happens when the state *explicitly* says
+    /// so (Shortcuts engine, detached, emergency); an unreadable store never
+    /// unshields anything.
+    static func action(engineKind: EngineKind?, isDetached: Bool, isEmergencyActive: Bool,
+                       appGroupAvailable: Bool, requireAppGroup: Bool) -> Action {
+        if requireAppGroup && !appGroupAvailable { return .skip(reason: "App Group unavailable") }
+        guard let engineKind else { return .skip(reason: "no engine recorded") }
+        if engineKind != .familyControls { return .clear(reason: "Shortcuts engine") }
+        if isDetached { return .clear(reason: "detached") }
+        if isEmergencyActive { return .clear(reason: "emergency") }
+        return .apply
+    }
+
     /// Re-derives every Bobbly shield from `shared`.
+    /// - Parameter requireAppGroup: pass `true` from extensions — if the signer
+    ///   dropped/renamed the App Group they see an empty private store and must
+    ///   not act on it.
     /// - Returns: a short description of what was applied (for diagnostics).
     @discardableResult
-    static func reconcile(shared: SharedStore = .shared, now: Date = Date()) -> String {
-        shared.pruneExpiredGrants(now: now)
+    static func reconcile(shared: SharedStore = .shared, now: Date = Date(), requireAppGroup: Bool = false) -> String {
+        let decision = action(engineKind: shared.engineKind, isDetached: shared.isDetached,
+                              isEmergencyActive: shared.isEmergencyActive(at: now),
+                              appGroupAvailable: AppGroup.isContainerAvailable, requireAppGroup: requireAppGroup)
+        if case .skip(let reason) = decision { return "skipped (\(reason))" }
 
+        shared.pruneExpiredGrants(now: now)
         if shared.isEmergencyActive(at: now) == false, shared.emergencyUntil != nil {
             shared.emergencyUntil = nil
         }
         if let study = shared.activeStudy, !study.isActive(at: now) {
+            shared.recordStudyEnd(study, at: study.endsAt ?? now, reason: .completed)
             shared.activeStudy = nil
-            shared.lastStudyEndedAt = study.endsAt ?? now
         }
 
-        guard shared.engineKind == .familyControls else {
+        if case .clear(let reason) = decision {
             clearAll()
-            return "cleared (engine is not FamilyControls)"
-        }
-        if shared.isDetached {
-            clearAll()
-            return "cleared (detached)"
-        }
-        if shared.isEmergencyActive(at: now) {
-            clearAll()
-            return "cleared (emergency)"
+            return "cleared (\(reason))"
         }
 
         let unlocked = Set(shared.activeGrants(at: now).compactMap(\.applicationToken))
-        applyBlockList(shared.blockedSelection, unlocked: unlocked)
-
         if let study = shared.activeStudy, study.isActive(at: now) {
-            applyStudy(whitelist: study.selection, unlocked: unlocked)
+            let whitelist = study.selection
+            // Whitelisted apps/sites stay usable while studying, even if they
+            // are also on the block list (same rule as AccessPolicy).
+            applyBlockList(shared.blockedSelection,
+                           unlocked: unlocked.union(whitelist.applicationTokens),
+                           allowedWebDomains: whitelist.webDomainTokens)
+            applyStudy(whitelist: whitelist, unlocked: unlocked)
             return "block list + study '\(study.whitelistName)', \(unlocked.count) unlocked"
         } else {
+            applyBlockList(shared.blockedSelection, unlocked: unlocked, allowedWebDomains: [])
             ManagedSettingsStore(named: .bobblyStudy).clearAllSettings()
             return "block list, \(unlocked.count) unlocked"
         }
@@ -61,7 +89,11 @@ enum ShieldPolicy {
 
     // MARK: - Private
 
-    private static func applyBlockList(_ selection: FamilyActivitySelection, unlocked: Set<ApplicationToken>) {
+    /// - Parameters:
+    ///   - unlocked: app tokens to leave unshielded (chat unlocks + study whitelist).
+    ///   - allowedWebDomains: site tokens to leave unshielded (study whitelist).
+    private static func applyBlockList(_ selection: FamilyActivitySelection, unlocked: Set<ApplicationToken>,
+                                       allowedWebDomains: Set<WebDomainToken>) {
         let store = ManagedSettingsStore(named: .bobblyBlock)
 
         let apps = selection.applicationTokens.subtracting(unlocked)
@@ -71,11 +103,12 @@ enum ShieldPolicy {
             ? nil
             : .specific(selection.categoryTokens, except: unlocked)
 
-        store.shield.webDomains = selection.webDomainTokens.isEmpty ? nil : selection.webDomainTokens
+        let sites = selection.webDomainTokens.subtracting(allowedWebDomains)
+        store.shield.webDomains = sites.isEmpty ? nil : sites
 
         store.shield.webDomainCategories = selection.categoryTokens.isEmpty
             ? nil
-            : .specific(selection.categoryTokens)
+            : .specific(selection.categoryTokens, except: allowedWebDomains)
     }
 
     /// Blocks every app/site except the whitelist (Phone, Messages and

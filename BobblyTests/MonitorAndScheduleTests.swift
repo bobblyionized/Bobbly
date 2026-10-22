@@ -36,7 +36,7 @@ final class MonitorAndScheduleTests: XCTestCase {
         let name = DeviceActivityName.bobblyUnlock(id)
         XCTAssertEqual(name.bobblyUnlockGrantID, id)
         XCTAssertTrue(name.isBobblyActivity)
-        XCTAssertNil(DeviceActivityName.bobblyEmergency.bobblyUnlockGrantID)
+        XCTAssertNil(DeviceActivityName.bobblyEmergency().bobblyUnlockGrantID)
         XCTAssertNil(DeviceActivityName("someone.else").bobblyUnlockGrantID)
         XCTAssertFalse(DeviceActivityName("someone.else").isBobblyActivity)
     }
@@ -82,11 +82,11 @@ final class MonitorAndScheduleTests: XCTestCase {
     func testEmergencyEndsOnlyWhenDue() {
         let store = makeStore()
         store.emergencyUntil = now.addingTimeInterval(3600) // extended meanwhile
-        XCTAssertEqual(MonitorLogic.handle(.bobblyEmergency, shared: store, now: now), .none)
+        XCTAssertEqual(MonitorLogic.handle(.bobblyEmergency(), shared: store, now: now), .none)
         XCTAssertNotNil(store.emergencyUntil)
 
         store.emergencyUntil = now.addingTimeInterval(-5)
-        XCTAssertEqual(MonitorLogic.handle(.bobblyEmergency, shared: store, now: now), .emergencyEnded)
+        XCTAssertEqual(MonitorLogic.handle(.bobblyEmergency(), shared: store, now: now), .emergencyEnded)
         XCTAssertNil(store.emergencyUntil)
     }
 
@@ -95,7 +95,7 @@ final class MonitorAndScheduleTests: XCTestCase {
         let end = now.addingTimeInterval(-1)
         store.activeStudy = ActiveStudy(sessionID: UUID(), whitelistID: UUID(), whitelistName: "Homework",
                                         selectionData: nil, allowedAppKeys: [], startedAt: now.addingTimeInterval(-3000), endsAt: end)
-        XCTAssertEqual(MonitorLogic.handle(.bobblyStudy, shared: store, now: now), .studyEnded(whitelistName: "Homework"))
+        XCTAssertEqual(MonitorLogic.handle(.bobblyStudy(), shared: store, now: now), .studyEnded(whitelistName: "Homework"))
         XCTAssertNil(store.activeStudy)
         XCTAssertEqual(store.lastStudyEndedAt, end)
     }
@@ -104,7 +104,7 @@ final class MonitorAndScheduleTests: XCTestCase {
         let store = makeStore()
         store.activeStudy = ActiveStudy(sessionID: UUID(), whitelistID: UUID(), whitelistName: "Open",
                                         selectionData: nil, allowedAppKeys: [], startedAt: now, endsAt: nil)
-        XCTAssertEqual(MonitorLogic.handle(.bobblyStudy, shared: store, now: now), .none)
+        XCTAssertEqual(MonitorLogic.handle(.bobblyStudy(), shared: store, now: now), .none)
         XCTAssertNotNil(store.activeStudy)
     }
 

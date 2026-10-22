@@ -92,11 +92,32 @@ final class EngineSelector {
             refresh()
             return
         }
+        let wasFamily = shared.engineKind == .familyControls
+        var status = familyControls.authorizationStatus
+        if wasFamily && status == .notDetermined && !prefersShortcuts {
+            // `.notDetermined` can be a stale read right after launch (developer
+            // forum reports). Re-requesting is silent while still authorized
+            // (Apple docs) and only prompts if access really was revoked.
+            if await requestFamilyControls() { return }
+            status = familyControls.authorizationStatus
+        }
+        if wasFamily && status != .approved {
+            // Access was revoked outside Bobbly (Settings › Screen Time): every
+            // saved token is void. Clear them so nothing dead is re-applied and
+            // the UI asks the user to pick apps again.
+            shared.invalidateTokens()
+            if shared.engineKind == .familyControls { shared.engineKind = nil } // once only
+            shared.appendLog("Screen Time access lost; saved app selections cleared")
+            if case .shortcutsFallback = state {
+                refresh() // the failed re-request already selected the fallback
+                return
+            }
+        }
         if prefersShortcuts {
             select(.shortcutsFallback(reason: "Chosen in Settings."))
             return
         }
-        switch familyControls.authorizationStatus {
+        switch status {
         case .approved:
             select(.familyControls)
         case .denied:
@@ -233,12 +254,7 @@ final class EngineSelector {
     /// FamilyControls detach runs (clear stores, stop monitoring, revoke);
     /// both engines share the "Bobbly off" flag, so Shortcuts checks pass too.
     func detach() async -> DetachReport {
-        let report: DetachReport
-        if state == .familyControls || familyControls.isAuthorized {
-            report = await familyControls.detach()
-        } else {
-            report = await shortcuts.detach()
-        }
+        let report = await DetachRule.detach(shared: shared, familyControls: familyControls, shortcuts: shortcuts)
         state = .detached
         refresh()
         return report

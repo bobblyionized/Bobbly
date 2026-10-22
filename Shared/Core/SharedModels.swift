@@ -95,6 +95,22 @@ struct ActiveStudy: Codable, Hashable, Sendable {
     }
 }
 
+/// How a study session ended, recorded by whoever ended it.
+struct StudyEndRecord: Codable, Hashable, Sendable {
+    enum Reason: String, Codable, Sendable {
+        /// The timer ran out (completed → bonus).
+        case completed
+        /// Ended early through the chat.
+        case endedEarly
+        /// Emergency detach / Screen Time revoked (no bonus, no penalty).
+        case detached
+    }
+
+    var sessionID: UUID
+    var endedAt: Date
+    var reason: Reason
+}
+
 /// Display name of a shielded app, keyed by its encoded token.
 struct ShieldedAppName: Codable, Hashable, Sendable {
     var applicationTokenData: Data

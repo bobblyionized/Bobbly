@@ -96,6 +96,13 @@ final class BlockedAppsViewModel {
         isPickerPresented = true
     }
 
+    /// Opens the permission tutorial (shown when `canUsePicker` is false).
+    /// This view is usually a sheet; the router dismisses it before the
+    /// tutorial cover appears. Inside the tutorial it simply stays on the tutorial.
+    func openTutorial() {
+        env.router.presentTutorial()
+    }
+
     /// FamilyControls: applies `selection` as the block list.
     func saveSelection() {
         do {

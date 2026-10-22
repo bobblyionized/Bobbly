@@ -29,8 +29,9 @@ struct CheckAccessIntent: AppIntent {
         let shared = SharedStore.shared
         let decision = AccessPolicy.decide(appName: app, snapshot: shared.accessSnapshot(), now: Date())
         if !decision.isAllowed {
-            // Logged in SwiftData only; SharedStore.interruptionsToday counts shield hits
-            // and is ingested separately (avoids double counting).
+            // One attempt = one interruption. The Gate this shortcut opens next
+            // uses logInterruptionIfNew, so it won't count the same attempt again.
+            // (SharedStore's per-day counts are shield hits only.)
             UsageTracker(context: BobblyModelContainer.shared.mainContext)
                 .logInterruption(appName: app, source: .checkAccess)
         }

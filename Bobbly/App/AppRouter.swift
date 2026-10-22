@@ -119,36 +119,71 @@ final class AppRouter {
     /// Bind with `.fullScreenCover(item: $router.cover)`.
     var cover: CoverRoute?
 
+    /// SwiftUI can't dismiss one modal and present another in the same update;
+    /// the second is presented after this delay.
+    static let modalHandoffDelay: Duration = .milliseconds(450)
+
+    @ObservationIgnored private var pendingModalTask: Task<Void, Never>?
+
     func select(_ tab: AppTab) {
         selectedTab = tab
     }
 
+    /// Presents a sheet. If a full-screen cover is up, it is dismissed first
+    /// and the sheet follows after `modalHandoffDelay`.
     func present(_ route: SheetRoute) {
-        sheet = route
+        pendingModalTask?.cancel()
+        guard cover != nil else {
+            sheet = route
+            return
+        }
+        cover = nil
+        schedule { $0.sheet = route }
     }
 
     func presentGate(_ target: ChatTarget) {
-        sheet = nil
-        cover = .gate(target)
+        presentCover(.gate(target))
     }
 
     func presentTutorial() {
-        sheet = nil
-        cover = .tutorial
+        presentCover(.tutorial)
     }
 
     func dismissSheet() {
+        pendingModalTask?.cancel()
         sheet = nil
     }
 
     func dismissCover() {
+        pendingModalTask?.cancel()
         cover = nil
     }
 
-    /// Closes any modal and shows `tab`.
+    /// Closes any modal (including a pending one) and shows `tab`.
     func showTab(_ tab: AppTab) {
+        pendingModalTask?.cancel()
         sheet = nil
         cover = nil
         selectedTab = tab
+    }
+
+    /// Presents a cover. If a sheet is up, it is dismissed first and the cover
+    /// follows after `modalHandoffDelay` (same race as sheet-over-cover).
+    private func presentCover(_ route: CoverRoute) {
+        pendingModalTask?.cancel()
+        guard sheet != nil else {
+            cover = route
+            return
+        }
+        sheet = nil
+        schedule { $0.cover = route }
+    }
+
+    private func schedule(_ change: @escaping @MainActor (AppRouter) -> Void) {
+        pendingModalTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: AppRouter.modalHandoffDelay)
+            guard let self, !Task.isCancelled else { return }
+            change(self)
+        }
     }
 }

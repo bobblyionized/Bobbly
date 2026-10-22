@@ -511,6 +511,20 @@ What remains can only be confirmed on a real device or by the first CI run.
   closed in SwiftData and credited on the next foreground.
 - **Manual engine choice.** Settings › "Use Shortcuts" persists until "Retry
   Screen Time access".
+- **Review fixes:**
+  - **Unreadable shared state:** extensions never unshield on an unreadable
+    App Group (`ShieldPolicy.action`).
+  - **Revoked access:** revoking Screen Time voids the saved tokens. The block
+    list is cleared and whitelists are flagged `needsRepick`.
+  - **Interruption counting:** each blocked attempt counts once (Check Access
+    plus Gate, or both shield buttons), and shield counts are kept per day.
+  - **Detach:** both the in-app and the Siri detach use one rule
+    (`DetachRule`) and clear every Bobbly notification. A study session
+    closed by a detach ends early with no bonus.
+  - **Triggers:** each emergency and study trigger has a unique name.
+  - **SwiftData store:** pinned to the app container (`groupContainer: .none`).
+  - **Study whitelists:** whitelisted apps stay usable even if they're also
+    on the block list.
 
 **Still unverified (device / CI)**
 
@@ -545,3 +559,32 @@ What remains can only be confirmed on a real device or by the first CI run.
     works.
   - Settings › `switchToShortcutsFallback()` now persists across launches until
     `retryScreenTimeAccess()`.
+
+- **2026-10-21 (review fixes): additive only, no breaking changes.**
+  - `HomeViewModel` has new separate counts: `blockedAppCount`,
+    `blockedCategoryCount` and `blockedWebsiteCount`. `.protecting(blockedCount:)`
+    still carries the total.
+  - `HomeViewModel.needsAppRepick: Bool` is true after Screen Time access was
+    revoked (detach, or turned off in iOS Settings). The saved app picks are
+    void, so show a "Pick your apps again" call to action that calls
+    `perform(.editBlockedApps)`. `protection` is `.setupNeeded` in that state.
+  - `StatsViewModel.openTutorial()` and `BlockedAppsViewModel.openTutorial()` are
+    new. Use them instead of calling `env.router.presentTutorial()` from views.
+  - `WhitelistSummary.needsRepick: Bool` is new and defaults to `false`. When
+    it's true, show "Pick apps again", which calls `edit(id)`. Under
+    FamilyControls, `startSession()` refuses such a whitelist and sets
+    `errorMessage`.
+  - **Router:**
+    - `router.present(_:)` now dismisses a full-screen cover first and shows
+      the sheet after `AppRouter.modalHandoffDelay` (450 ms).
+    - `presentGate(_:)` and `presentTutorial()` likewise dismiss an open sheet
+      first.
+    - `showTab(_:)`, `dismissSheet()` and `dismissCover()` cancel a pending
+      hand-off.
+    - In tests or previews, a modal requested while another is open appears
+      only after the delay.
+  - `EmergencyViewModel.cancelHold()` is now a no-op once the hold has
+    completed. Releasing the finger can no longer cancel a running unblock or
+    detach.
+  - `ChatViewModel.onAppear()` only starts a new conversation when
+    `phase == .idle`, so it no longer wipes a gate- or shield-targeted chat.

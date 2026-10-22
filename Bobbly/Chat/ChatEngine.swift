@@ -81,6 +81,12 @@ struct ChatTurn: Equatable {
     var decision: ChatDecision?
 
     static let none = ChatTurn(acceptsFreeText: false)
+
+    /// Nothing to show or do (the engine ignored the input). Presenting it
+    /// would wipe the current chips/input, so the ViewModel skips it.
+    var isEmpty: Bool {
+        lines.isEmpty && quickReplies.isEmpty && decision == nil && cooldown == nil && commitmentPhrase == nil
+    }
 }
 
 /// SplitMix64 — tiny deterministic RNG so tests can pin phrase choices.

@@ -36,6 +36,12 @@ final class SharedStore: @unchecked Sendable {
         case monitorLog
         case lastStudyEndedAt
         case lastShieldedApp
+        case interruptionsByDay
+        case lastShieldHitKey
+        case lastShieldHitAt
+        case tokensRevokedAt
+        case studyEndRecords
+        case importedInterruptionsByDay
 
         var name: String { "bobbly.shared." + rawValue }
     }
@@ -151,8 +157,59 @@ final class SharedStore: @unchecked Sendable {
     func unlocksToday(now: Date = Date()) -> Int { counter(.unlocksToday, now: now) }
     func incrementUnlocks(now: Date = Date()) { increment(.unlocksToday, now: now) }
 
-    func interruptionsToday(now: Date = Date()) -> Int { counter(.interruptionsToday, now: now) }
-    func incrementInterruptions(now: Date = Date()) { increment(.interruptionsToday, now: now) }
+    // MARK: - Shield interruptions (kept per day so days the app wasn't opened aren't lost)
+
+    /// Days kept in `interruptionsByDay`.
+    static let interruptionHistoryDays = 60
+    /// Two shield hits on the same app within this window are one attempt.
+    static let shieldHitDedupWindow: TimeInterval = 120
+
+    /// Stable key for a day: start-of-day Unix time as a string.
+    static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
+        String(Int(calendar.startOfDay(for: date).timeIntervalSince1970))
+    }
+
+    /// Shield interruptions per day (`dayKey` → count), recorded by the shield-action extension.
+    var interruptionsByDay: [String: Int] {
+        get { (defaults.dictionary(forKey: Key.interruptionsByDay.name) as? [String: Int]) ?? [:] }
+        set { defaults.set(newValue, forKey: Key.interruptionsByDay.name) }
+    }
+
+    func interruptionsToday(now: Date = Date()) -> Int {
+        interruptionsByDay[Self.dayKey(now)] ?? 0
+    }
+
+    /// App-only bookkeeping: per-day counts already copied into SwiftData.
+    var importedInterruptionsByDay: [String: Int] {
+        get { (defaults.dictionary(forKey: Key.importedInterruptionsByDay.name) as? [String: Int]) ?? [:] }
+        set { defaults.set(newValue, forKey: Key.importedInterruptionsByDay.name) }
+    }
+
+    func incrementInterruptions(now: Date = Date()) {
+        var map = interruptionsByDay
+        map[Self.dayKey(now), default: 0] += 1
+        let oldest = now.addingTimeInterval(-Double(Self.interruptionHistoryDays) * 86_400).timeIntervalSince1970
+        map = map.filter { (Double($0.key) ?? 0) >= oldest }
+        interruptionsByDay = map
+    }
+
+    /// Counts one shield interruption for `attemptKey` (an encoded token),
+    /// ignoring repeat hits on the same app within `shieldHitDedupWindow`
+    /// (e.g. "Talk to Bobbly" then "Go back" on the same shield).
+    /// - Returns: `true` if it was counted.
+    @discardableResult
+    func recordShieldInterruption(attemptKey: String, now: Date = Date()) -> Bool {
+        if defaults.string(forKey: Key.lastShieldHitKey.name) == attemptKey,
+           let last = defaults.object(forKey: Key.lastShieldHitAt.name) as? Date,
+           now.timeIntervalSince(last) < Self.shieldHitDedupWindow, now >= last {
+            defaults.set(now, forKey: Key.lastShieldHitAt.name)
+            return false
+        }
+        defaults.set(attemptKey, forKey: Key.lastShieldHitKey.name)
+        defaults.set(now, forKey: Key.lastShieldHitAt.name)
+        incrementInterruptions(now: now)
+        return true
+    }
 
     private func dayStamp(_ date: Date) -> Double {
         Calendar.current.startOfDay(for: date).timeIntervalSince1970
@@ -163,8 +220,50 @@ final class SharedStore: @unchecked Sendable {
         if defaults.double(forKey: Key.counterDay.name) != today {
             defaults.set(today, forKey: Key.counterDay.name)
             defaults.set(0, forKey: Key.unlocksToday.name)
-            defaults.set(0, forKey: Key.interruptionsToday.name)
         }
+    }
+
+    // MARK: - Token invalidation
+
+    /// Set when Screen Time authorization was revoked (detach, or the user
+    /// turned it off in Settings). Every token saved before it is void: the
+    /// block list is cleared and whitelists must be re-picked.
+    var tokensRevokedAt: Date? {
+        get { defaults.object(forKey: Key.tokensRevokedAt.name) as? Date }
+        set { defaults.set(newValue, forKey: Key.tokensRevokedAt.name) }
+    }
+
+    /// Clears every saved FamilyControls token and records the revocation.
+    func invalidateTokens(now: Date = Date()) {
+        blockedSelection = FamilyActivitySelection()
+        grants = grants.filter { $0.tokenData == nil }
+        if let study = activeStudy {
+            // Its whitelist tokens are void; never keep shielding "everything except nothing".
+            recordStudyEnd(study, at: now, reason: .detached)
+            activeStudy = nil
+        }
+        tokensRevokedAt = now
+    }
+
+    // MARK: - Study end records
+
+    /// Why/when recent study sessions ended (newest last, max 10). Lets the app
+    /// close its SwiftData session correctly even if the end happened elsewhere
+    /// (monitor extension, Siri detach).
+    var studyEndRecords: [StudyEndRecord] {
+        get { TokenCoding.decode([StudyEndRecord].self, from: defaults.data(forKey: Key.studyEndRecords.name)) ?? [] }
+        set { defaults.set(TokenCoding.encode(Array(newValue.suffix(10))), forKey: Key.studyEndRecords.name) }
+    }
+
+    func recordStudyEnd(_ study: ActiveStudy, at date: Date, reason: StudyEndRecord.Reason) {
+        lastStudyEndedAt = date
+        var records = studyEndRecords.filter { $0.sessionID != study.sessionID }
+        records.append(StudyEndRecord(sessionID: study.sessionID, endedAt: date, reason: reason))
+        studyEndRecords = records
+    }
+
+    func studyEndRecord(for sessionID: UUID) -> StudyEndRecord? {
+        studyEndRecords.last { $0.sessionID == sessionID }
     }
 
     private func counter(_ key: Key, now: Date) -> Int {

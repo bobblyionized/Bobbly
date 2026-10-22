@@ -45,7 +45,8 @@ final class GateViewModel {
         refresh()
         if !decision.isAllowed && !didLogInterruption {
             didLogInterruption = true
-            env.tracker.logInterruption(appName: appName, source: .gate)
+            // CheckAccessIntent usually logged this attempt a moment ago.
+            env.tracker.logInterruptionIfNew(appName: appName, source: .gate)
             env.home.refresh()
         }
     }

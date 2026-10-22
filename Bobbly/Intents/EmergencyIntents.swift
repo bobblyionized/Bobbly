@@ -52,12 +52,13 @@ struct DetachBobblyIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let shared = SharedStore.shared
-        let report: DetachReport
-        if shared.engineKind == .familyControls {
-            report = await FamilyControlsEngine(shared: shared).detach()
-        } else {
-            report = await ShortcutsEngine(shared: shared).detach()
-        }
+        // Same rule as the in-app Emergency screen (EngineSelector.detach).
+        let report = await DetachRule.detach(shared: shared,
+                                             familyControls: FamilyControlsEngine(shared: shared),
+                                             shortcuts: ShortcutsEngine(shared: shared))
+        // The engines recorded a `.detached` StudyEndRecord for any running
+        // study; StudyViewModel.syncWithEngine closes the SwiftData session
+        // (ended early, no bonus) when the app observes this change.
         NotificationCenter.default.post(name: .bobblySharedStateChanged, object: nil)
         let summary = report.revokedAuthorization
             ? "Bobbly is detached and no longer has Screen Time access."

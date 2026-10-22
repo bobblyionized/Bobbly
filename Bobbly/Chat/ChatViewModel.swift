@@ -77,8 +77,11 @@ final class ChatViewModel {
     // MARK: Actions
 
     /// Starts a conversation if none is running (Chat tab opened directly).
+    /// Checks `phase` (set synchronously by `start`) rather than `messages`
+    /// (filled asynchronously), so a gate/shield-targeted chat that is still
+    /// rendering its first lines is never wiped.
     func onAppear() {
-        if messages.isEmpty { start(target: nil) }
+        if phase == .idle { start(target: nil) }
     }
 
     /// Starts a new conversation about `target` (`nil` = Bobbly asks which app).
@@ -160,6 +163,16 @@ final class ChatViewModel {
 
     private func present(_ turn: ChatTurn, typing: Bool) {
         phase = engine.phase
+        // A cooldown only lives while the engine is cooling down (e.g. the
+        // user tapped "skip it" mid-countdown → cancel the timer).
+        if case .coolingDown = engine.phase {} else {
+            cooldownTask?.cancel()
+            cooldownTask = nil
+            cooldown = nil
+        }
+        // Never present an empty turn: it would wipe the chips and disable the
+        // input, stranding the conversation.
+        guard !turn.isEmpty else { return }
         quickReplies = []
         acceptsFreeText = false
         turnTask?.cancel()
@@ -190,6 +203,11 @@ final class ChatViewModel {
             let wait = max(0, value.endsAt.timeIntervalSinceNow)
             try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled else { return }
+            // The conversation may have moved on (gave up, restarted).
+            guard case .coolingDown = self.engine.phase else {
+                self.cooldown = nil
+                return
+            }
             self.cooldown = nil
             self.present(self.engine.respond(to: .cooldownElapsed, now: Date()), typing: false)
         }

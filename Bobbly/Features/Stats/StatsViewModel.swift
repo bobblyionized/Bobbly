@@ -132,6 +132,11 @@ final class StatsViewModel {
         env.router.present(.search)
     }
 
+    /// Opens the permission tutorial (e.g. from the "Set up Screen Time" empty state).
+    func openTutorial() {
+        env.router.presentTutorial()
+    }
+
     // MARK: Helpers
 
     private func studyMinutes(in interval: DateInterval, now: Date) -> Int {

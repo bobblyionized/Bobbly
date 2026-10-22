@@ -30,20 +30,27 @@ final class ShieldActionExtension: ShieldActionDelegate {
     override func handle(action: ShieldAction, for category: ActivityCategoryToken,
                          completionHandler: @escaping (ShieldActionResponse) -> Void) {
         completionHandler(respond(to: action, request: PendingShieldRequest(
-            applicationTokenData: nil, webDomainTokenData: nil, appName: nil, requestedAt: Date())))
+            applicationTokenData: nil, webDomainTokenData: nil, appName: nil, requestedAt: Date()),
+            attemptKey: "category:" + (TokenCoding.encode(category)?.base64EncodedString() ?? "?")))
     }
 
-    private func respond(to action: ShieldAction, request: PendingShieldRequest) -> ShieldActionResponse {
+    private func respond(to action: ShieldAction, request: PendingShieldRequest,
+                         attemptKey: String? = nil) -> ShieldActionResponse {
+        // One blocked attempt per app, however many shield buttons get pressed.
+        let key = attemptKey
+            ?? request.applicationTokenData.map { "app:" + $0.base64EncodedString() }
+            ?? request.webDomainTokenData.map { "web:" + $0.base64EncodedString() }
+            ?? "unknown"
         switch action {
         case .primaryButtonPressed:
-            shared.incrementInterruptions()
+            shared.recordShieldInterruption(attemptKey: key)
             shared.pendingShieldRequest = request
             shared.lastShieldNotificationAt = Date()
             BobblyNotifications.postTalkToBobbly(appName: request.appName)
             shared.appendLog("shield: talk to Bobbly (\(request.appName ?? "unknown app"))")
             return .defer
         case .secondaryButtonPressed:
-            shared.incrementInterruptions()
+            shared.recordShieldInterruption(attemptKey: key)
             return .close
         @unknown default:
             return .close

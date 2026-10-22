@@ -110,14 +110,13 @@ final class ShortcutsEngine: BlockingEngine {
     /// true. iOS doesn't let apps delete automations, so the report lists the
     /// manual steps.
     func detach() async -> DetachReport {
-        if postsNotifications {
-            let ids = shared.grants.flatMap { [BobblyNotifications.ID.unlockEnding($0.id), BobblyNotifications.ID.unlockEnded($0.id)] }
-            BobblyNotifications.cancel(ids: ids + [BobblyNotifications.ID.emergencyEnded, BobblyNotifications.ID.studyEnded])
-        }
+        if postsNotifications { BobblyNotifications.cancelAll() }
+        if let study = shared.activeStudy { shared.recordStudyEnd(study, at: clock(), reason: .detached) }
         shared.isDetached = true
         shared.grants = []
         shared.activeStudy = nil
         shared.emergencyUntil = nil
+        shared.pendingShieldRequest = nil
         return DetachReport(
             engine: .shortcuts,
             clearedShields: true,

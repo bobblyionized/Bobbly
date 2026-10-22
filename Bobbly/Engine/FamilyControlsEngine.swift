@@ -124,12 +124,13 @@ final class FamilyControlsEngine: BlockingEngine {
         let until = now.addingTimeInterval(TimeInterval(max(1, minutes) * 60))
         shared.emergencyUntil = until
         reconcile()
-        scheduleTrigger(.bobblyEmergency, at: until, now: now)
+        stopTriggers { $0.isBobblyEmergencyTrigger }
+        scheduleTrigger(.bobblyEmergency(), at: until, now: now)
     }
 
     func endEmergency() {
         shared.emergencyUntil = nil
-        center.stopMonitoring([.bobblyEmergency])
+        stopTriggers { $0.isBobblyEmergencyTrigger }
         reconcile()
     }
 
@@ -137,30 +138,34 @@ final class FamilyControlsEngine: BlockingEngine {
         guard isAuthorized else { throw EngineError.notAuthorized }
         shared.activeStudy = study
         reconcile()
-        center.stopMonitoring([.bobblyStudy])
+        stopTriggers { $0.isBobblyStudyTrigger }
         if let end = study.endsAt {
-            scheduleTrigger(.bobblyStudy, at: end, now: clock())
+            scheduleTrigger(.bobblyStudy(), at: end, now: clock())
         }
     }
 
     func endStudy() {
         shared.activeStudy = nil
-        center.stopMonitoring([.bobblyStudy])
+        stopTriggers { $0.isBobblyStudyTrigger }
         reconcile()
     }
 
     /// Clears every store, stops every DeviceActivity schedule and revokes
     /// Screen Time authorization, so Bobbly disappears from
-    /// Settings › Screen Time › Apps with Screen Time Access.
+    /// Settings › Screen Time › Apps with Screen Time Access. A successful
+    /// revoke voids every saved token, so the block list is cleared and
+    /// whitelists are flagged for re-picking (`SharedStore.invalidateTokens`).
     func detach() async -> DetachReport {
         var errors: [String] = []
-        let pendingIDs = shared.grants.map { BobblyNotifications.ID.unlockEnding($0.id) }
-        BobblyNotifications.cancel(ids: pendingIDs)
+        let now = clock()
+        BobblyNotifications.cancelAll()
 
+        if let study = shared.activeStudy { shared.recordStudyEnd(study, at: now, reason: .detached) }
         shared.isDetached = true
         shared.grants = []
         shared.activeStudy = nil
         shared.emergencyUntil = nil
+        shared.pendingShieldRequest = nil
 
         ShieldPolicy.clearAll()
         center.stopMonitoring()
@@ -169,6 +174,7 @@ final class FamilyControlsEngine: BlockingEngine {
         do {
             try await revokeAuthorization()
             revoked = true
+            shared.invalidateTokens(now: now)
         } catch {
             errors.append("Revoking Screen Time access failed: \(error.localizedDescription)")
         }
@@ -229,12 +235,30 @@ final class FamilyControlsEngine: BlockingEngine {
                 scheduleTrigger(.bobblyUnlock(first.id), at: expiry, now: now)
             }
         }
-        if let until = shared.emergencyUntil, until > now, !registered.contains(.bobblyEmergency) {
-            scheduleTrigger(.bobblyEmergency, at: until, now: now)
+
+        // Emergency: exactly one trigger while it runs, none otherwise.
+        if let until = shared.emergencyUntil, until > now {
+            if !registered.contains(where: { $0.isBobblyEmergencyTrigger }) {
+                scheduleTrigger(.bobblyEmergency(), at: until, now: now)
+            }
+        } else {
+            stopTriggers { $0.isBobblyEmergencyTrigger }
         }
-        if let end = shared.activeStudy?.endsAt, end > now, !registered.contains(.bobblyStudy) {
-            scheduleTrigger(.bobblyStudy, at: end, now: now)
+
+        // Timed study: same rule.
+        if let end = shared.activeStudy?.endsAt, end > now {
+            if !registered.contains(where: { $0.isBobblyStudyTrigger }) {
+                scheduleTrigger(.bobblyStudy(), at: end, now: now)
+            }
+        } else {
+            stopTriggers { $0.isBobblyStudyTrigger }
         }
+    }
+
+    /// Stops every registered activity matching `predicate`.
+    private func stopTriggers(where predicate: (DeviceActivityName) -> Bool) {
+        let names = center.activities.filter(predicate)
+        if !names.isEmpty { center.stopMonitoring(names) }
     }
 
     private func removeGrantAndTrigger(_ id: UUID) {

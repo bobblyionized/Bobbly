@@ -16,14 +16,23 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Pinned image (macos-latest moves); Xcode is selected explicitly below.
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Toolchain info
+      - name: Select Xcode
         run: |
+          # Newest stable Xcode 16.x on the image (no betas / release candidates).
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | grep -viE 'beta|rc' | sort -V | tail -1 || true)
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          fi
+          echo "Selected: $(xcode-select -p)"
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
           swift --version
 
       - name: Install XcodeGen and ldid
@@ -35,27 +44,19 @@ jobs:
       - name: Pick an iPhone simulator
         id: sim
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c '
-          import json, sys
-          devices = json.load(sys.stdin)["devices"]
-          for runtime in sorted(devices, reverse=True):
-              if "iOS" not in runtime:
-                  continue
-              for d in devices[runtime]:
-                  if d["name"].startswith("iPhone"):
-                      print(d["udid"]); sys.exit(0)
-          sys.exit(1)
-          ')
+          UDID=$(python3 scripts/pick_simulator.py || true)
           echo "Using simulator $UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
       - name: Unit tests (simulator)
         run: |
           mkdir -p build
+          DEST="id=${{ steps.sim.outputs.udid }}"
+          if [ -z "${{ steps.sim.outputs.udid }}" ]; then DEST="platform=iOS Simulator,name=iPhone 16"; fi
           if ! xcodebuild test \
               -project Bobbly.xcodeproj \
               -scheme Bobbly \
-              -destination "id=${{ steps.sim.outputs.udid }}" \
+              -destination "$DEST" \
               -resultBundlePath build/TestResults.xcresult \
               CODE_SIGNING_ALLOWED=NO \
               > build/test.log 2>&1; then

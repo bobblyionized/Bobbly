@@ -99,6 +99,18 @@ final class HomeViewModel {
         }
     }
 
+    /// Separate block-list counts (the `.protecting(blockedCount:)` total merges them).
+    var blockedAppCount: Int { env.engines.status.blockedAppCount }
+    var blockedCategoryCount: Int { env.engines.status.blockedCategoryCount }
+    var blockedWebsiteCount: Int { env.engines.status.blockedWebDomainCount }
+
+    /// `true` after Screen Time access was revoked (detach, or turned off in
+    /// Settings): the saved app picks are void and must be chosen again.
+    /// Show a "Pick your apps again" call to action (→ `perform(.editBlockedApps)`).
+    var needsAppRepick: Bool {
+        env.engines.state == .familyControls && !env.engines.status.hasAnythingBlocked && env.shared.tokensRevokedAt != nil
+    }
+
     /// FamilyControls only: embed `DeviceActivityReport(todayReportContext, filter: todayReportFilter)`.
     var showsTodayReport: Bool { engineKind == .familyControls }
     var todayReportContext: DeviceActivityReport.Context { .bobblyTodaySummary }
@@ -119,7 +131,7 @@ final class HomeViewModel {
         freeUnlocksLeft = max(0, env.preferences.dailyFreeUnlocks - unlocksToday)
 
         let today = UsageAggregator.lastDays(1, now: now)
-        interruptionsToday = env.tracker.interruptionCount(in: today) + pendingShieldInterruptions(now: now)
+        interruptionsToday = env.tracker.interruptionCount(in: today) + env.pendingShieldInterruptionsToday(now: now)
 
         if status.kind == .shortcuts {
             let records = env.tracker.records(in: today)
@@ -166,11 +178,5 @@ final class HomeViewModel {
         if let first = status.activeUnlocks.first { return .unlocked(appName: first.displayName, until: first.expiresAt) }
         if engineState == .undetermined || !status.hasAnythingBlocked { return .setupNeeded }
         return .protecting(blockedCount: status.blockedAppCount + status.blockedCategoryCount + status.blockedWebDomainCount)
-    }
-
-    /// Shield hits counted by the extension but not yet ingested into SwiftData.
-    private func pendingShieldInterruptions(now: Date) -> Int {
-        let ingested = UserDefaults.standard.integer(forKey: "bobbly.app.ingestedShieldInterruptions")
-        return max(0, env.shared.interruptionsToday(now: now) - ingested)
     }
 }
