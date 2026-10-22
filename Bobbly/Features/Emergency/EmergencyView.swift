@@ -33,6 +33,8 @@ struct EmergencyView: View {
                 .padding(.top, Theme.Spacing.xs)
                 .padding(.bottom, Theme.Spacing.xxl)
             }
+            // A scroll must not steal the finger mid-hold (it would cancel the hold).
+            .scrollDisabled(model.holdingAction != nil)
             .bobblyPage()
             .navigationTitle("Emergency")
             .navigationBarTitleDisplayMode(.large)

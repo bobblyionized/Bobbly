@@ -117,6 +117,13 @@ final class ChatViewModel {
     /// Taps a quick-reply chip.
     func select(_ reply: QuickReply) {
         guard !isBobblyTyping else { return }
+        if reply.kind == .startOver {
+            // Full reset through `start`: clears the old target, outcome card,
+            // commitment and pending grant, so a new conversation can never
+            // unlock the previous app. A study-session chat stays about the study.
+            start(target: target?.subject == .studySession ? target : nil)
+            return
+        }
         messages.append(ChatMessage(sender: .user, text: reply.title))
         present(respond(.quickReply(reply)), typing: true)
     }

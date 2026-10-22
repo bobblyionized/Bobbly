@@ -84,34 +84,62 @@ final class EngineSelector {
 
     // MARK: - Selection
 
-    /// Call at launch and whenever the app becomes active.
+    /// In-flight bootstrap / authorization request (single-flight: launch,
+    /// scene activation and intent notifications can all ask at once at cold
+    /// launch — exactly when a transient `.notDetermined` read happens).
+    @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
+    @ObservationIgnored private var requestTask: Task<AuthorizationRequestResult, Never>?
+
+    /// Call at launch and whenever the app becomes active. Concurrent calls
+    /// share one run.
     /// - Parameter requestIfNeeded: show the Screen Time prompt if not determined yet.
     func bootstrap(requestIfNeeded: Bool) async {
+        if let running = bootstrapTask {
+            await running.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runBootstrap(requestIfNeeded: requestIfNeeded)
+        }
+        bootstrapTask = task
+        await task.value
+        bootstrapTask = nil
+    }
+
+    private func runBootstrap(requestIfNeeded: Bool) async {
         if shared.isDetached {
             state = .detached
             refresh()
             return
         }
         let wasFamily = shared.engineKind == .familyControls
-        var status = familyControls.authorizationStatus
-        if wasFamily && status == .notDetermined && !prefersShortcuts {
+        var status = AuthorizationRules.Status(familyControls.authorizationStatus)
+
+        if AuthorizationRules.shouldSilentlyReRequest(wasFamily: wasFamily, status: status, prefersShortcuts: prefersShortcuts) {
             // `.notDetermined` can be a stale read right after launch (developer
             // forum reports). Re-requesting is silent while still authorized
             // (Apple docs) and only prompts if access really was revoked.
-            if await requestFamilyControls() { return }
-            status = familyControls.authorizationStatus
-        }
-        if wasFamily && status != .approved {
-            // Access was revoked outside Bobbly (Settings › Screen Time): every
-            // saved token is void. Clear them so nothing dead is re-applied and
-            // the UI asks the user to pick apps again.
-            shared.invalidateTokens()
-            if shared.engineKind == .familyControls { shared.engineKind = nil } // once only
-            shared.appendLog("Screen Time access lost; saved app selections cleared")
-            if case .shortcutsFallback = state {
-                refresh() // the failed re-request already selected the fallback
-                return
+            let result = await performAuthorizationRequest()
+            status = AuthorizationRules.Status(familyControls.authorizationStatus)
+            switch AuthorizationRules.afterSilentReRequest(result, statusAfter: status) {
+            case .activate:
+                select(.familyControls)
+            case .revoked:
+                handleRevocation()
+                select(.shortcutsFallback(reason: "Screen Time access was turned off."))
+            case .keepAndRetry:
+                // Not proof of revocation: keep the FamilyControls engine and its
+                // shields exactly as they are (no activate/clear), retry next time.
+                shared.appendLog("Screen Time status unclear (\(result)); keeping current shields, will retry")
+                state = .familyControls
+                refresh()
             }
+            return
+        }
+
+        if AuthorizationRules.isDefiniteRevocation(wasFamily: wasFamily, status: status, request: nil) {
+            handleRevocation()
         }
         if prefersShortcuts {
             select(.shortcutsFallback(reason: "Chosen in Settings."))
@@ -131,30 +159,73 @@ final class EngineSelector {
                 state = .undetermined
                 refresh()
             }
-        @unknown default:
-            select(.shortcutsFallback(reason: "Unknown Screen Time authorization state."))
         }
     }
 
-    /// Shows the Screen Time prompt. On failure, falls back to Shortcuts.
+    /// Shows the Screen Time prompt (user-initiated: tutorial, Settings › Retry,
+    /// reattach). A fresh setup falls back to Shortcuts on failure; a previously
+    /// working FamilyControls setup only does so on a definite denial.
     /// - Returns: `true` if FamilyControls is now active.
     @discardableResult
     func requestFamilyControls() async -> Bool {
-        isRequestingAuthorization = true
-        defer { isRequestingAuthorization = false }
         prefersShortcuts = false
-        do {
-            try await familyControls.requestAuthorization()
-            lastAuthorizationError = nil
+        let wasFamily = shared.engineKind == .familyControls
+        let result = await performAuthorizationRequest()
+        switch AuthorizationRules.afterUserRequest(result, wasFamily: wasFamily) {
+        case .activate:
             if shared.isDetached { shared.isDetached = false }
             select(.familyControls)
             return true
-        } catch {
-            lastAuthorizationError = String(describing: error)
-            shared.appendLog("Screen Time authorization failed: \(error)")
-            select(.shortcutsFallback(reason: "Screen Time access failed: \(error.localizedDescription)"))
+        case .fallback(let invalidate):
+            if invalidate { handleRevocation() }
+            let reason = result == .userDenied ? "Screen Time access was declined." : "Screen Time access failed."
+            select(.shortcutsFallback(reason: reason))
+            return false
+        case .keepFamilyControls:
+            state = shared.isDetached ? .detached : .familyControls
+            refresh()
             return false
         }
+    }
+
+    /// Runs (or joins) the single in-flight authorization request.
+    private func performAuthorizationRequest() async -> AuthorizationRequestResult {
+        if let running = requestTask {
+            return await running.value
+        }
+        isRequestingAuthorization = true
+        let engine = familyControls
+        let task = Task { @MainActor () -> AuthorizationRequestResult in
+            do {
+                try await engine.requestAuthorization()
+                return .approved
+            } catch {
+                return AuthorizationRequestResult(error: error)
+            }
+        }
+        requestTask = task
+        let result = await task.value
+        requestTask = nil
+        isRequestingAuthorization = false
+        switch result {
+        case .approved:
+            lastAuthorizationError = nil
+        case .userDenied:
+            lastAuthorizationError = "The Screen Time prompt was cancelled."
+            shared.appendLog("Screen Time authorization cancelled by the user")
+        case .failed(let detail):
+            lastAuthorizationError = detail
+            shared.appendLog("Screen Time authorization failed: \(detail)")
+        }
+        return result
+    }
+
+    /// Definite revocation: every saved token is void. Clear them so nothing
+    /// dead is re-applied and the UI asks the user to pick apps again.
+    private func handleRevocation() {
+        shared.invalidateTokens()
+        if shared.engineKind == .familyControls { shared.engineKind = nil } // once only
+        shared.appendLog("Screen Time access revoked; saved app selections cleared")
     }
 
     /// Manually switch to the Shortcuts fallback (Settings). Persists until

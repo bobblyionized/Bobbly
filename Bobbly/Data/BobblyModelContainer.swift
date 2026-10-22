@@ -1,8 +1,11 @@
 //  BobblyModelContainer.swift
 //  Bobbly/Data — one ModelContainer for the app process (UI + App Intents).
 //
-//  Stored in the app's own container, NOT the App Group: if a signer strips
-//  the App Group entitlement, a group-container store would fail to open.
+//  The store lives in the app's own sandbox container (Application Support),
+//  pinned with `groupContainer: .none` + `cloudKitDatabase: .none` below. It is
+//  never in the App Group container, so its location doesn't change if a
+//  re-signer adds or drops the App Group entitlement. Extensions never open it;
+//  they share state through `SharedStore` (App Group UserDefaults) only.
 
 import Foundation
 import SwiftData

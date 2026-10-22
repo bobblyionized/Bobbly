@@ -96,11 +96,25 @@ final class BlockedAppsViewModel {
         isPickerPresented = true
     }
 
+    /// Overrides what `openTutorial()` does. Set by the presenter — the
+    /// permissions tutorial sets it (via
+    /// `PermissionsTutorialViewModel.makeBlockedAppsViewModel()`) to close this
+    /// sheet and jump to its Screen Time step instead of re-presenting itself.
+    @ObservationIgnored var onOpenTutorial: (@MainActor () -> Void)?
+
+    /// `true` when this screen was opened from inside the permissions tutorial
+    /// (the "Set up Screen Time" button then means "go to the Screen Time step").
+    var isPresentedFromTutorial: Bool { onOpenTutorial != nil }
+
     /// Opens the permission tutorial (shown when `canUsePicker` is false).
-    /// This view is usually a sheet; the router dismisses it before the
-    /// tutorial cover appears. Inside the tutorial it simply stays on the tutorial.
+    /// From the tab UI: the router dismisses this sheet, then presents the
+    /// tutorial cover. From inside the tutorial: runs `onOpenTutorial`.
     func openTutorial() {
-        env.router.presentTutorial()
+        if let onOpenTutorial {
+            onOpenTutorial()
+        } else {
+            env.router.presentTutorial()
+        }
     }
 
     /// FamilyControls: applies `selection` as the block list.

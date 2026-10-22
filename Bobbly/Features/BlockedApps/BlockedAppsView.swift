@@ -29,14 +29,28 @@ struct BlockedAppsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        saveIfNeeded()
+                        dismiss()
+                    }
                 }
             }
         }
         .familyActivityPicker(isPresented: $model.isPickerPresented, selection: $model.selection)
+        // The system picker's own Done looks final, so its picks are applied right away.
+        .onChange(of: model.isPickerPresented) { wasPresented, isPresented in
+            if wasPresented && !isPresented { saveIfNeeded() }
+        }
         .onAppear { model.onAppear() }
         .bobblyHaptic(trigger: model.savedMessage) { _, new in
             new == nil ? nil : SensoryFeedback.success
+        }
+    }
+
+    /// Screen Time: apply changed picks (no-op when nothing changed).
+    private func saveIfNeeded() {
+        if model.engineKind == .familyControls && model.canUsePicker && model.hasUnsavedChanges {
+            model.saveSelection()
         }
     }
 
@@ -53,7 +67,7 @@ struct BlockedAppsView: View {
                             Button {
                                 model.openTutorial()
                             } label: {
-                                Label("Set up Screen Time", systemImage: "hourglass")
+                                Label(model.isPresentedFromTutorial ? "Go to the Screen Time step" : "Set up Screen Time", systemImage: "hourglass")
                             }
                             .buttonStyle(.bobbly(.primary, fullWidth: false))
                         }
@@ -100,13 +114,16 @@ struct BlockedAppsView: View {
                         InlineNotice(kind: .success, text: saved)
                     }
 
-                    Button {
-                        model.saveSelection()
-                    } label: {
-                        Label("Save and block", systemImage: "lock.fill")
+                    // Picks save as soon as the picker closes; this only shows
+                    // if that save failed, so the user can try again.
+                    if model.hasUnsavedChanges {
+                        Button {
+                            model.saveSelection()
+                        } label: {
+                            Label("Save and block", systemImage: "lock.fill")
+                        }
+                        .buttonStyle(.bobblyPrimary)
                     }
-                    .buttonStyle(.bobblyPrimary)
-                    .disabled(!model.hasUnsavedChanges)
 
                     Text("Talk to Bobbly whenever you need one of these apps back.")
                         .font(.footnote)
@@ -136,7 +153,7 @@ private struct ShortcutsBlockedApps: View {
                         Button {
                             model.openTutorial()
                         } label: {
-                            Label("Set up Screen Time", systemImage: "hourglass")
+                            Label(model.isPresentedFromTutorial ? "Go to the Screen Time step" : "Set up Screen Time", systemImage: "hourglass")
                         }
                         .buttonStyle(.bobbly(.primary, fullWidth: false, compact: true))
                     }

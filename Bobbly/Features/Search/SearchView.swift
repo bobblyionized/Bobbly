@@ -13,6 +13,9 @@ struct SearchView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var isQueryFocused: Bool
+    /// Bumped on every search the user runs, so the Screen Time report reloads
+    /// even when only the name filter changed (the filter itself is equal).
+    @State private var reportRevision = 0
 
     init(model: SearchViewModel) {
         _model = State(initialValue: model)
@@ -34,7 +37,7 @@ struct SearchView: View {
                     dateControls
                     Button {
                         isQueryFocused = false
-                        model.search()
+                        runSearch()
                     } label: {
                         Label("Search", systemImage: "magnifyingglass")
                     }
@@ -80,10 +83,10 @@ struct SearchView: View {
                 .submitLabel(.search)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-                .onSubmit { model.search() }
+                .onSubmit { runSearch() }
             if !model.query.isEmpty {
                 Button {
-                    model.clear()
+                    clearQuery(text)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Theme.Palette.inkTertiary)
@@ -96,6 +99,24 @@ struct SearchView: View {
         .padding(.vertical, 12)
         .background(Theme.Palette.surface, in: Capsule())
         .overlay { Capsule().stroke(Theme.Palette.hairline, lineWidth: 1) }
+    }
+
+    private func runSearch() {
+        model.search()
+        reportRevision += 1
+    }
+
+    /// Shortcuts: the query is the whole search, so clear everything.
+    /// Screen Time: the query only narrows the picked apps, so keep the picks
+    /// and the report, drop the name filter and re-run.
+    private func clearQuery(_ text: Binding<String>) {
+        switch model.dataSource {
+        case .shortcutsLog:
+            model.clear()
+        case .screenTimeReport:
+            text.wrappedValue = ""
+            if model.hasSearched { runSearch() }
+        }
     }
 
     private var showsSuggestions: Bool {
@@ -233,6 +254,7 @@ struct SearchView: View {
         case .screenTimeReport:
             if let filter = model.reportFilter {
                 DeviceActivityReport(model.reportContext, filter: filter)
+                    .id(reportRevision)
                     .frame(height: 640)
                     .frame(maxWidth: .infinity)
             } else if model.hasSearched {

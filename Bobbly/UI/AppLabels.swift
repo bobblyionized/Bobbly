@@ -17,8 +17,10 @@ struct AppSubjectLabel: View {
         switch subject {
         case .application(let token):
             Label(token)
-        case .appName(let name):
-            Label(name, systemImage: AppCatalog.app(named: name)?.symbol ?? "app.dashed")
+        case .appName(let key):
+            // The subject holds a normalized key ("instagram"); show the display name.
+            let title = fallbackName.isEmpty ? key : fallbackName
+            Label(title, systemImage: (AppCatalog.app(named: title) ?? AppCatalog.app(named: key))?.symbol ?? "app.dashed")
         case .studySession:
             Label(fallbackName, systemImage: "book.closed")
         }

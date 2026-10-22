@@ -46,7 +46,7 @@ struct PermissionsTutorialView: View {
             if phase == .active { Task { await model.refreshStatuses() } }
         }
         .sheet(isPresented: $model.isBlockedAppsPresented, onDismiss: refresh) {
-            BlockedAppsView(model: env.makeBlockedAppsViewModel())
+            BlockedAppsView(model: model.makeBlockedAppsViewModel())
                 .tint(Theme.Palette.pond)
         }
         .sheet(isPresented: $model.isWhitelistEditorPresented, onDismiss: refresh) {

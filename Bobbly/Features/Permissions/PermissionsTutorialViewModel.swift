@@ -145,6 +145,23 @@ final class PermissionsTutorialViewModel {
         if let index = steps.firstIndex(where: { $0.id == id }) { currentIndex = index }
     }
 
+    /// Closes any sub-screen opened from the tutorial and shows the Screen Time step.
+    func showScreenTimeStep() {
+        isBlockedAppsPresented = false
+        isWhitelistEditorPresented = false
+        isEmergencyPresented = false
+        goTo(.screenTime)
+    }
+
+    /// The BlockedApps model to present from inside the tutorial: its
+    /// "Set up Screen Time" action (`openTutorial()`) closes the sheet and jumps
+    /// to the Screen Time step instead of re-presenting the tutorial.
+    func makeBlockedAppsViewModel() -> BlockedAppsViewModel {
+        let model = env.makeBlockedAppsViewModel()
+        model.onOpenTutorial = { [weak self] in self?.showScreenTimeStep() }
+        return model
+    }
+
     func perform(_ action: TutorialAction) async {
         isWorking = true
         defer { isWorking = false }

@@ -588,3 +588,28 @@ What remains can only be confirmed on a real device or by the first CI run.
     detach.
   - `ChatViewModel.onAppear()` only starts a new conversation when
     `phase == .idle`, so it no longer wipes a gate- or shield-targeted chat.
+
+- **2026-10-22 (review pass 2): additive only.**
+  - **BlockedApps opened from inside the tutorial.** In
+    `PermissionsTutorialView`'s `isBlockedAppsPresented` sheet, build the model
+    with `model.makeBlockedAppsViewModel()` instead of
+    `env.makeBlockedAppsViewModel()`.
+    - That model's `openTutorial()` closes the sheet and jumps to the tutorial's
+      Screen Time step instead of trying to re-present the tutorial.
+    - New `BlockedAppsViewModel.isPresentedFromTutorial: Bool`. Use it for the
+      button label, e.g. "Go to the Screen Time step" instead of "Set up
+      Screen Time".
+    - New `BlockedAppsViewModel.onOpenTutorial: (@MainActor () -> Void)?` hook.
+      The tutorial factory sets it; other presenters may set it too.
+    - New `PermissionsTutorialViewModel.showScreenTimeStep()` closes any
+      tutorial sub-sheet and calls `goTo(.screenTime)`. `goTo(_ id:)` is
+      unchanged.
+  - **Chat "Start over" chip.** It now fully resets the conversation, like
+    `start(target:)`: no old target, no old outcome card, and the next grant
+    can't unlock the previous app. A study-session chat restarts about the
+    study. No view change needed.
+  - **Screen Time recovery.** Bootstrap is single-flight. A failed silent
+    re-request keeps the FamilyControls engine and its shields, and retries on
+    the next foreground. Saved picks are cleared only on a definite denial
+    (status `.denied`, or the user cancelling the prompt). No view change
+    needed; `lastAuthorizationError` appears in diagnostics.

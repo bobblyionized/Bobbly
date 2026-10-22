@@ -123,6 +123,57 @@ final class ViewModelFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testStartOverFullyResetsTargetSoTheOldAppIsNeverUnlocked() async {
+        let env = makeEnvironment()
+        env.shared.blockedAppKeys = ["Instagram", "YouTube"]
+        env.chat.start(target: ChatTarget(subject: .appName("Instagram"), displayName: "Instagram", origin: .gate))
+        await waitUntil { !env.chat.quickReplies.isEmpty }
+        env.chat.draft = "bored"
+        env.chat.send()
+        await waitUntil { env.chat.quickReplies.contains { $0.kind == .giveUp } }
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .giveUp }!)
+        await waitUntil { env.chat.quickReplies.contains { $0.kind == .startOver } }
+        XCTAssertEqual(env.chat.outcome, .declined)
+
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .startOver }!)
+        XCTAssertNil(env.chat.target)
+        XCTAssertNil(env.chat.outcome)
+        XCTAssertEqual(env.chat.phase, .askingApp)
+        await waitUntil { env.chat.acceptsFreeText }
+
+        env.chat.draft = "YouTube"
+        env.chat.send()
+        await waitUntil { env.chat.quickReplies.contains { $0.kind == .reason(.work) } }
+        env.chat.select(env.chat.quickReplies.first { $0.kind == .reason(.work) }!)
+        await waitUntil { env.chat.outcome != nil }
+
+        guard case .granted(let name, _, _, _, _) = env.chat.outcome else {
+            return XCTFail("expected a grant, got \(String(describing: env.chat.outcome))")
+        }
+        XCTAssertEqual(name, "YouTube")
+        XCTAssertTrue(env.engines.decision(forAppNamed: "YouTube").isAllowed)
+        XCTAssertFalse(env.engines.decision(forAppNamed: "Instagram").isAllowed)
+    }
+
+    @MainActor
+    func testTutorialPresentedBlockedAppsJumpsToScreenTimeStep() async {
+        let env = makeEnvironment()
+        let tutorial = env.makeTutorialViewModel()
+        await tutorial.refreshStatuses()
+        tutorial.isBlockedAppsPresented = true
+        tutorial.currentIndex = tutorial.steps.count - 1
+
+        let blocked = tutorial.makeBlockedAppsViewModel()
+        XCTAssertTrue(blocked.isPresentedFromTutorial)
+        blocked.openTutorial()
+        XCTAssertFalse(tutorial.isBlockedAppsPresented)
+        XCTAssertEqual(tutorial.currentStep?.id, .screenTime)
+        XCTAssertNil(env.router.cover) // didn't try to re-present the tutorial
+
+        XCTAssertFalse(env.makeBlockedAppsViewModel().isPresentedFromTutorial)
+    }
+
+    @MainActor
     func testOnAppearDoesNotWipeTargetedChat() async {
         let env = makeEnvironment()
         env.chat.start(target: ChatTarget(subject: .appName("Reddit"), displayName: "Reddit", origin: .gate))
