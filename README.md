@@ -1,3 +1,5 @@
+vibe coding like theres no tomorrow
+
 # Bobbly
 
 A screen-time companion for iOS 17+. Pick distracting apps; when you open one,
